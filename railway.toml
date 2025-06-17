@@ -4,17 +4,21 @@ buildCommand = "npm run build"
 watchPatterns = ["src/**/*", "public/**/*", "package.json", "next.config.js"]
 
 [deploy]
-startCommand = "npm start"
+startCommand = "node server.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
-healthcheckPath = "/"
-healthcheckTimeout = 300
+healthcheckPath = "/health"
+healthcheckTimeout = 100
 
 [env]
 NODE_ENV = "production"
 NIXPACKS_NODE_VERSION = "18"
 PORT = "3000"
+HOSTNAME = "0.0.0.0"
 NEXT_TELEMETRY_DISABLED = "1"
+NEXT_PUBLIC_API_URL = "https://api.placeholder.com"
+NEXT_PUBLIC_SUPABASE_URL = "https://placeholder.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY = "placeholder-anon-key"
 
 [[services]]
 [services.web]

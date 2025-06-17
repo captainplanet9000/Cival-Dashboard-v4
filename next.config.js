@@ -3,9 +3,6 @@ const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
   serverExternalPackages: ['ioredis'],
-  experimental: {
-    serverComponentsExternalPackages: ['@supabase/supabase-js']
-  },
   webpack: (config) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
