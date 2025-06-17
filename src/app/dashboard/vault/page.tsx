@@ -1,3 +1,6 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -5,6 +8,8 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Vault,
   Shield,
@@ -28,9 +33,15 @@ import {
   Banknote,
   Activity,
   PieChart,
-  Target
+  Target,
+  RefreshCw,
+  Send
 } from "lucide-react";
 import { formatPrice, formatPercentage } from "@/lib/utils";
+import { useWalletStore } from '@/lib/store/walletStore';
+import { useAgentStore } from '@/lib/store/agentStore';
+import { useFarmStore } from '@/lib/store/farmStore';
+import { toast } from 'react-hot-toast';
 
 // Vault hierarchy and accounts data
 const vaultHierarchy = {
@@ -254,6 +265,162 @@ function getTransactionIcon(type: string) {
 }
 
 export default function VaultPage() {
+  const [depositAmount, setDepositAmount] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const [selectedFarm, setSelectedFarm] = useState('');
+  const [activeTab, setActiveTab] = useState<'overview' | 'deposit' | 'transfer'>('overview');
+
+  const {
+    totalBalance,
+    balances,
+    transactions,
+    isConnected,
+    address,
+    loading,
+    connectWallet,
+    deposit,
+    transferToAgent,
+    transferToFarm,
+    loadBalance,
+    refreshPrices
+  } = useWalletStore();
+
+  const { agents, fetchAgents } = useAgentStore();
+  const { farms, fetchFarms } = useFarmStore();
+
+  useEffect(() => {
+    fetchAgents();
+    fetchFarms();
+    if (isConnected) {
+      loadBalance();
+    }
+  }, [isConnected, fetchAgents, fetchFarms, loadBalance]);
+
+  const handleQuickDeposit = async (amount: number) => {
+    try {
+      await deposit(amount, 'USDC');
+      toast.success(`Successfully deposited $${amount} USDC`);
+    } catch (error) {
+      toast.error('Failed to deposit funds');
+    }
+  };
+
+  const handleDeposit = async () => {
+    if (!depositAmount || isNaN(Number(depositAmount))) {
+      toast.error('Please enter a valid amount');
+      return;
+    }
+
+    try {
+      await deposit(Number(depositAmount), 'USDC');
+      setDepositAmount('');
+      toast.success(`Successfully deposited $${depositAmount} USDC`);
+    } catch (error) {
+      toast.error('Failed to deposit funds');
+    }
+  };
+
+  const handleTransferToAgent = async () => {
+    if (!transferAmount || !selectedAgent) {
+      toast.error('Please enter amount and select agent');
+      return;
+    }
+
+    try {
+      await transferToAgent(selectedAgent, Number(transferAmount), 'USDC');
+      setTransferAmount('');
+      setSelectedAgent('');
+      toast.success(`Successfully transferred $${transferAmount} to agent`);
+    } catch (error) {
+      toast.error('Failed to transfer to agent');
+    }
+  };
+
+  const handleTransferToFarm = async () => {
+    if (!transferAmount || !selectedFarm) {
+      toast.error('Please enter amount and select farm');
+      return;
+    }
+
+    try {
+      await transferToFarm(selectedFarm, Number(transferAmount), 'USDC');
+      setTransferAmount('');
+      setSelectedFarm('');
+      toast.success(`Successfully transferred $${transferAmount} to farm`);
+    } catch (error) {
+      toast.error('Failed to transfer to farm');
+    }
+  };
+
+  // Calculate derived metrics from our stores
+  const totalAgentBalance = agents.reduce((sum, agent) => sum + agent.balance, 0);
+  const totalFarmValue = farms.reduce((sum, farm) => sum + farm.totalValue, 0);
+  const activeAgents = agents.filter(agent => agent.status === 'active').length;
+  const activeFarms = farms.filter(farm => farm.status === 'active').length;
+
+  // Update vault hierarchy with real data
+  const realVaultHierarchy = {
+    masterVault: {
+      ...vaultHierarchy.masterVault,
+      balance: totalBalance,
+      totalAllocated: totalAgentBalance + totalFarmValue,
+      available: totalBalance - (totalAgentBalance + totalFarmValue)
+    }
+  };
+
+  if (!isConnected) {
+    return (
+      <div className="flex items-center justify-center min-h-[600px]">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <Vault className="h-16 w-16 mx-auto text-primary mb-4" />
+            <CardTitle>Connect Your Wallet</CardTitle>
+            <CardDescription>
+              Connect your wallet to access the vault banking system and start trading
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={connectWallet} className="w-full" disabled={loading}>
+              {loading ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  <Wallet className="mr-2 h-4 w-4" />
+                  Connect Wallet
+                </>
+              )}
+            </Button>
+            <div className="mt-6 space-y-2">
+              <p className="text-sm text-muted-foreground text-center">Quick Start:</p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => connectWallet().then(() => handleQuickDeposit(50))}
+                  disabled={loading}
+                >
+                  Start with $50
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => connectWallet().then(() => handleQuickDeposit(100))}
+                  disabled={loading}
+                >
+                  Start with $100
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -261,26 +428,308 @@ export default function VaultPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Vault Banking</h1>
           <p className="text-muted-foreground">
-            Multi-account management with hierarchical structure and DeFi integration
+            Fund your autonomous trading agents and farms
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline">
-            <Eye className="mr-2 h-4 w-4" />
-            Audit Trail
+          <Button variant="outline" onClick={refreshPrices} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
           </Button>
-          <Button variant="outline">
-            <Settings className="mr-2 h-4 w-4" />
-            Vault Settings
-          </Button>
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            New Vault
-          </Button>
+          <div className="flex gap-1">
+            <Button 
+              variant={activeTab === 'deposit' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('deposit')}
+            >
+              <Plus className="mr-1 h-3 w-3" />
+              Deposit
+            </Button>
+            <Button 
+              variant={activeTab === 'transfer' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('transfer')}
+            >
+              <Send className="mr-1 h-3 w-3" />
+              Transfer
+            </Button>
+          </div>
         </div>
       </div>
 
-                  {/* Master Vault Overview */}      <Card className="border-primary/20 bg-primary/5">        <CardHeader>          <div className="flex items-center justify-between">            <div className="flex items-center space-x-3">              <Vault className="h-6 w-6 text-primary" />              <CardTitle className="text-xl">{vaultHierarchy.masterVault.name}</CardTitle>              <Badge variant="default">{vaultHierarchy.masterVault.status.toUpperCase()}</Badge>            </div>            <div className="flex items-center space-x-3">              <Badge variant="secondary" className="flex items-center gap-1">                <Shield className="h-3 w-3" />                {vaultHierarchy.masterVault.complianceScore}% Compliant              </Badge>            </div>          </div>        </CardHeader>        <CardContent>          <div className="grid gap-4 md:grid-cols-4">            <StatCard              title="Total Balance"              value={formatPrice(vaultHierarchy.masterVault.balance)}              icon={<DollarSign className="h-4 w-4" />}              variant="info"            />            <StatCard              title="Allocated"              value={formatPrice(vaultHierarchy.masterVault.totalAllocated)}              description={`${formatPercentage((vaultHierarchy.masterVault.totalAllocated / vaultHierarchy.masterVault.balance))} of total`}              icon={<Target className="h-4 w-4" />}              variant="warning"            />            <StatCard              title="Available"              value={formatPrice(vaultHierarchy.masterVault.available)}              description="Ready to allocate"              icon={<Wallet className="h-4 w-4" />}              variant="profit"            />            <StatCard              title="Sub-Vaults"              value={vaultHierarchy.masterVault.subVaults}              description="Active portfolios"              icon={<PieChart className="h-4 w-4" />}              variant="default"            />          </div>                    {/* Allocation Progress */}          <div className="mt-6 space-y-2">            <div className="flex justify-between text-sm">              <span className="text-muted-foreground">Capital Allocation</span>              <span className="font-medium">                {formatPercentage((vaultHierarchy.masterVault.totalAllocated / vaultHierarchy.masterVault.balance))}              </span>            </div>            <Progress               value={(vaultHierarchy.masterVault.totalAllocated / vaultHierarchy.masterVault.balance) * 100}              className="h-3"            />          </div>        </CardContent>      </Card>
+      {/* Quick Deposit Actions */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Button
+          onClick={() => handleQuickDeposit(50)}
+          className="h-20 flex-col space-y-2"
+          variant="outline"
+          disabled={loading}
+        >
+          <Plus className="h-6 w-6" />
+          <span>Add $50</span>
+        </Button>
+        
+        <Button
+          onClick={() => handleQuickDeposit(100)}
+          className="h-20 flex-col space-y-2"
+          variant="outline"
+          disabled={loading}
+        >
+          <Plus className="h-6 w-6" />
+          <span>Add $100</span>
+        </Button>
+        
+        <Button
+          onClick={() => handleQuickDeposit(500)}
+          className="h-20 flex-col space-y-2"
+          variant="outline"
+          disabled={loading}
+        >
+          <Plus className="h-6 w-6" />
+          <span>Add $500</span>
+        </Button>
+        
+        <Button
+          onClick={() => handleQuickDeposit(1000)}
+          className="h-20 flex-col space-y-2"
+          variant="outline"
+          disabled={loading}
+        >
+          <Plus className="h-6 w-6" />
+          <span>Add $1000</span>
+        </Button>
+      </div>
+
+                  {/* Master Vault Overview */}
+      <Card className="border-primary/20 bg-primary/5">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Vault className="h-6 w-6 text-primary" />
+              <CardTitle className="text-xl">Master Trading Vault</CardTitle>
+              <Badge variant="default">ACTIVE</Badge>
+            </div>
+            <div className="flex items-center space-x-3">
+              <Badge variant="secondary" className="flex items-center gap-1">
+                <Shield className="h-3 w-3" />
+                98% Compliant
+              </Badge>
+              <span className="text-sm text-gray-500">
+                {address && `${address.slice(0, 6)}...${address.slice(-4)}`}
+              </span>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-4">
+            <StatCard
+              title="Total Balance"
+              value={formatPrice(totalBalance)}
+              icon={<DollarSign className="h-4 w-4" />}
+              variant="info"
+            />
+            <StatCard
+              title="Allocated to Agents"
+              value={formatPrice(totalAgentBalance)}
+              description={`${activeAgents} active agents`}
+              icon={<Users className="h-4 w-4" />}
+              variant="warning"
+            />
+            <StatCard
+              title="Allocated to Farms"
+              value={formatPrice(totalFarmValue)}
+              description={`${activeFarms} active farms`}
+              icon={<Target className="h-4 w-4" />}
+              variant="warning"
+            />
+            <StatCard
+              title="Available"
+              value={formatPrice(Math.max(0, totalBalance - totalAgentBalance - totalFarmValue))}
+              description="Ready to allocate"
+              icon={<Wallet className="h-4 w-4" />}
+              variant="profit"
+            />
+          </div>
+          
+          {/* Allocation Progress */}
+          <div className="mt-6 space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Capital Allocation</span>
+              <span className="font-medium">
+                {totalBalance > 0 ? formatPercentage((totalAgentBalance + totalFarmValue) / totalBalance) : '0%'}
+              </span>
+            </div>
+            <Progress 
+              value={totalBalance > 0 ? ((totalAgentBalance + totalFarmValue) / totalBalance) * 100 : 0}
+              className="h-3"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Deposit & Transfer Interface */}
+      {activeTab === 'deposit' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Deposit Funds</CardTitle>
+            <CardDescription>Add funds to your master vault</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex space-x-4">
+              <Input
+                type="number"
+                placeholder="Amount"
+                value={depositAmount}
+                onChange={(e) => setDepositAmount(e.target.value)}
+                className="flex-1"
+              />
+              <Button onClick={handleDeposit} disabled={loading || !depositAmount}>
+                <Plus className="w-4 h-4 mr-2" />
+                Deposit
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {activeTab === 'transfer' && (
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Transfer to Agent</CardTitle>
+              <CardDescription>Fund individual trading agents</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                type="number"
+                placeholder="Amount"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+              />
+              <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select agent..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {agents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name} - ${agent.balance.toLocaleString()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={handleTransferToAgent} className="w-full" disabled={loading}>
+                <Send className="w-4 h-4 mr-2" />
+                Transfer to Agent
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Transfer to Farm</CardTitle>
+              <CardDescription>Fund agent farms for group strategies</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                type="number"
+                placeholder="Amount"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+              />
+              <Select value={selectedFarm} onValueChange={setSelectedFarm}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select farm..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {farms.map((farm) => (
+                    <SelectItem key={farm.id} value={farm.id}>
+                      {farm.name} - ${farm.totalValue.toLocaleString()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={handleTransferToFarm} className="w-full" disabled={loading}>
+                <Send className="w-4 h-4 mr-2" />
+                Transfer to Farm
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Current Balances */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Token Balances</CardTitle>
+          <CardDescription>Your current token holdings</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {balances.map((balance) => (
+              <div key={balance.token} className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-sm font-semibold text-blue-600">{balance.symbol}</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold">{balance.token}</p>
+                    <p className="text-sm text-gray-600">{formatPrice(balance.price)} per token</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-semibold">{balance.amount.toFixed(4)} {balance.symbol}</p>
+                  <p className="text-sm text-gray-600">{formatPrice(balance.value)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Recent Transactions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Transactions</CardTitle>
+          <CardDescription>Latest wallet activity</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {transactions.length === 0 ? (
+            <div className="text-center py-8">
+              <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-500">No transactions yet</p>
+              <p className="text-sm text-gray-400">Start by depositing funds or transferring to agents</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {transactions.slice(0, 10).map((tx) => (
+                <div key={tx.id} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
+                  <div className="flex items-center space-x-3">
+                    {getTransactionIcon(tx.type)}
+                    <div>
+                      <p className="font-medium capitalize">{tx.type}</p>
+                      <p className="text-sm text-gray-600">
+                        {new Date(tx.timestamp).toLocaleString()}
+                      </p>
+                      {tx.agentId && <p className="text-xs text-blue-600">Agent Transfer</p>}
+                      {tx.farmId && <p className="text-xs text-green-600">Farm Transfer</p>}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold">
+                      {tx.type === 'withdrawal' ? '-' : '+'}
+                      {tx.amount} {tx.token}
+                    </p>
+                    <Badge variant={tx.status === 'confirmed' ? 'default' : tx.status === 'pending' ? 'secondary' : 'destructive'}>
+                      {tx.status}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
                   {/* Important Alerts */}      {complianceMetrics.pendingActions > 0 && (        <Alert variant="destructive">          <AlertCircle className="h-4 w-4" />          <AlertTitle>Compliance Action Required</AlertTitle>          <AlertDescription>            {complianceMetrics.pendingActions} compliance actions require immediate attention.             Review your vault settings and ensure all requirements are met.          </AlertDescription>        </Alert>      )}      {/* Sub-Vaults Grid */}      <div>        <div className="flex items-center justify-between mb-4">          <h2 className="text-xl font-semibold">Sub-Vault Portfolio</h2>          <Badge variant="secondary" className="flex items-center gap-1">            <Activity className="h-3 w-3" />            {vaultHierarchy.subVaults.filter(v => v.status === 'active').length} Active          </Badge>        </div>        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {vaultHierarchy.subVaults.map((vault) => (

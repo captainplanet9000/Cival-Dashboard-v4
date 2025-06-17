@@ -1,11 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {   Bot,  Plus,  Settings,  MessageSquare,  Brain,  Network,  Cloud,  Zap,  Users,  Database,  Activity,  CheckCircle2,  AlertCircle,  Clock,  Trash2,  Edit,  Copy,  Play,  Pause,  RotateCcw,  Shield,  Code,  Globe,  Cpu,  HardDrive} from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import {   Bot,  Plus,  Settings,  MessageSquare,  Brain,  Network,  Cloud,  Zap,  Users,  Database,  Activity,  CheckCircle2,  AlertCircle,  Clock,  Trash2,  Edit,  Copy,  Play,  Pause,  RotateCcw,  Shield,  Code,  Globe,  Cpu,  HardDrive,  DollarSign,  TrendingUp,  RefreshCw} from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { useAgentStore } from '@/lib/store/agentStore';
+import { useFarmStore } from '@/lib/store/farmStore';
+import { useWalletStore } from '@/lib/store/walletStore';
+import { formatPrice } from '@/lib/utils';
 
 // Agent types and configurations
 const agentTemplates = [
@@ -191,18 +196,119 @@ export default function AgentsPage() {
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [agentName, setAgentName] = useState('');
+  const [fundingAmount, setFundingAmount] = useState('');
+  const [selectedAgentForFunding, setSelectedAgentForFunding] = useState('');
 
-  const handleCreateAgent = () => {
+  const { 
+    agents, 
+    loading, 
+    fetchAgents, 
+    createAgent, 
+    startAgent, 
+    pauseAgent, 
+    deleteAgent,
+    fundAgent,
+    refreshAgentData 
+  } = useAgentStore();
+  
+  const { farms } = useFarmStore();
+  const { transferToAgent, isConnected } = useWalletStore();
+
+  useEffect(() => {
+    fetchAgents();
+  }, [fetchAgents]);
+
+  // Auto-refresh agent data every 30 seconds
+  useEffect(() => {
+    if (agents.length > 0) {
+      const interval = setInterval(() => {
+        agents.forEach(agent => refreshAgentData(agent.id));
+      }, 30000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [agents, refreshAgentData]);
+
+  const handleCreateAgent = async () => {
     if (!selectedTemplate || !agentName) {
       toast.error('Please select a template and enter an agent name');
       return;
     }
 
-    toast.success(`Creating agent: ${agentName}`);
-    setShowCreateAgent(false);
-    setSelectedTemplate('');
-    setAgentName('');
+    try {
+      const template = agentTemplates.find(t => t.id === selectedTemplate);
+      await createAgent({
+        name: agentName,
+        type: selectedTemplate.includes('trading') ? 'trading' : 
+              selectedTemplate.includes('arbitrage') ? 'arbitrage' :
+              selectedTemplate.includes('risk') ? 'trading' : 'trading',
+        strategy: selectedTemplate
+      });
+      
+      toast.success(`Created agent: ${agentName}`);
+      setShowCreateAgent(false);
+      setSelectedTemplate('');
+      setAgentName('');
+    } catch (error) {
+      toast.error('Failed to create agent');
+    }
   };
+
+  const handleStartAgent = async (agentId: string) => {
+    try {
+      await startAgent(agentId);
+      toast.success('Agent started successfully');
+    } catch (error) {
+      toast.error('Failed to start agent');
+    }
+  };
+
+  const handlePauseAgent = async (agentId: string) => {
+    try {
+      await pauseAgent(agentId);
+      toast.success('Agent paused successfully');
+    } catch (error) {
+      toast.error('Failed to pause agent');
+    }
+  };
+
+  const handleDeleteAgent = async (agentId: string) => {
+    if (confirm('Are you sure you want to delete this agent?')) {
+      try {
+        await deleteAgent(agentId);
+        toast.success('Agent deleted successfully');
+      } catch (error) {
+        toast.error('Failed to delete agent');
+      }
+    }
+  };
+
+  const handleFundAgent = async () => {
+    if (!selectedAgentForFunding || !fundingAmount) {
+      toast.error('Please select an agent and enter funding amount');
+      return;
+    }
+
+    try {
+      if (isConnected) {
+        await transferToAgent(selectedAgentForFunding, Number(fundingAmount), 'USDC');
+      } else {
+        await fundAgent(selectedAgentForFunding, Number(fundingAmount));
+      }
+      
+      setFundingAmount('');
+      setSelectedAgentForFunding('');
+      toast.success(`Successfully funded agent with $${fundingAmount}`);
+    } catch (error) {
+      toast.error('Failed to fund agent');
+    }
+  };
+
+  // Calculate aggregate metrics
+  const totalAgentValue = agents.reduce((sum, agent) => sum + agent.balance, 0);
+  const activeAgents = agents.filter(agent => agent.status === 'active').length;
+  const totalPnl24h = agents.reduce((sum, agent) => sum + agent.pnl24h, 0);
+  const avgWinRate = agents.length > 0 ? agents.reduce((sum, agent) => sum + agent.winRate, 0) / agents.length : 0;
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -229,17 +335,113 @@ export default function AgentsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Agent Management</h1>
           <p className="text-muted-foreground">
-            Create, manage, and coordinate AI agents with Google SDK integration
+            Create, manage, and coordinate autonomous trading agents
           </p>
         </div>
         <div className="flex items-center gap-2">
-                    <Button variant="outline">            <Cloud className="mr-2 h-4 w-4" />            Google Console          </Button>          <Button variant="outline">            <Database className="mr-2 h-4 w-4" />            Shared Memory          </Button>
+          <Button variant="outline" onClick={() => agents.forEach(agent => refreshAgentData(agent.id))} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           <Button onClick={() => setShowCreateAgent(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Create Agent
           </Button>
         </div>
       </div>
+
+      {/* Agent Metrics Overview */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Total Value</p>
+                <p className="text-2xl font-bold">{formatPrice(totalAgentValue)}</p>
+              </div>
+              <DollarSign className="h-8 w-8 text-blue-500" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Active Agents</p>
+                <p className="text-2xl font-bold">{activeAgents}</p>
+                <p className="text-xs text-muted-foreground">of {agents.length} total</p>
+              </div>
+              <Bot className="h-8 w-8 text-green-500" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">24h P&L</p>
+                <p className={`text-2xl font-bold ${totalPnl24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {totalPnl24h >= 0 ? '+' : ''}{formatPrice(totalPnl24h)}
+                </p>
+              </div>
+              <TrendingUp className={`h-8 w-8 ${totalPnl24h >= 0 ? 'text-green-500' : 'text-red-500'}`} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Avg Win Rate</p>
+                <p className="text-2xl font-bold">{avgWinRate.toFixed(1)}%</p>
+              </div>
+              <Activity className="h-8 w-8 text-purple-500" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Agent Funding Interface */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Fund Agents</CardTitle>
+          <CardDescription>
+            Transfer funds directly to your trading agents
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex space-x-4">
+            <Select value={selectedAgentForFunding} onValueChange={setSelectedAgentForFunding}>
+              <SelectTrigger className="w-64">
+                <SelectValue placeholder="Select agent..." />
+              </SelectTrigger>
+              <SelectContent>
+                {agents.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.name} - {formatPrice(agent.balance)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            
+            <Input
+              type="number"
+              placeholder="Amount"
+              value={fundingAmount}
+              onChange={(e) => setFundingAmount(e.target.value)}
+              className="w-32"
+            />
+            
+            <Button onClick={handleFundAgent} disabled={loading}>
+              <DollarSign className="w-4 h-4 mr-2" />
+              Fund Agent
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Google SDK Integration Status */}
       <Card className="border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/50">
@@ -352,101 +554,126 @@ export default function AgentsPage() {
         </Card>
       )}
 
-      {/* Existing Agents */}
+      {/* Active Agents */}
       <Card>
         <CardHeader>
-          <CardTitle>Active Agents</CardTitle>
+          <CardTitle>Trading Agents</CardTitle>
           <CardDescription>
-            Manage your AI agents and monitor their performance
+            Manage your autonomous trading agents and monitor their performance
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {existingAgents.map((agent) => (
-              <div key={agent.id} className="p-4 rounded-lg border">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <Bot className="h-5 w-5 text-primary" />
+          {agents.length === 0 ? (
+            <div className="text-center py-12">
+              <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No agents created yet</h3>
+              <p className="text-gray-500 mb-4">Create your first trading agent to start autonomous trading</p>
+              <Button onClick={() => setShowCreateAgent(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Your First Agent
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {agents.map((agent) => (
+                <div key={agent.id} className="p-4 rounded-lg border">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-3">
+                      <Bot className="h-5 w-5 text-primary" />
+                      <div>
+                        <span className="font-semibold">{agent.name}</span>
+                        <span className="text-sm text-muted-foreground ml-2 capitalize">({agent.type})</span>
+                      </div>
+                      {getStatusIcon(agent.status)}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {agent.status === 'active' ? (
+                        <Button size="sm" variant="outline" onClick={() => handlePauseAgent(agent.id)}>
+                          <Pause className="h-3 w-3" />
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={() => handleStartAgent(agent.id)}>
+                          <Play className="h-3 w-3" />
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => handleDeleteAgent(agent.id)}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-4 mb-4">
                     <div>
-                      <span className="font-semibold">{agent.name}</span>
-                      <span className="text-sm text-muted-foreground ml-2">({agent.type})</span>
-                    </div>
-                    {getStatusIcon(agent.status)}
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Button size="sm" variant="outline">
-                      <Edit className="h-3 w-3" />
-                    </Button>
-                    <Button size="sm" variant="outline">
-                      <Copy className="h-3 w-3" />
-                    </Button>
-                    <Button size="sm" variant="outline">
-                      <Pause className="h-3 w-3" />
-                    </Button>
-                    <Button size="sm" variant="outline">
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-4 mb-4">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Uptime</p>
-                    <p className="text-sm font-medium">{agent.uptime}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Memory Usage</p>
-                    <p className="text-sm font-medium">{agent.memoryUsage}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">CPU Usage</p>
-                    <p className="text-sm font-medium">{agent.cpuUsage}%</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Messages Processed</p>
-                    <p className="text-sm font-medium">{agent.messagesProcessed.toLocaleString()}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">Google SDK Modules:</p>
-                    <div className="flex flex-wrap gap-1">
-                                             {agent.googleSdkModules.map((module, index) => (                         <span key={index} className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded">                           <Cloud className="inline h-3 w-3 mr-1" />                           {module}                         </span>                       ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">Connected Agents:</p>
-                    <div className="flex flex-wrap gap-1">
-                      {agent.connectedAgents.map((connectedId, index) => {
-                        const connectedAgent = existingAgents.find(a => a.id === connectedId);
-                        return (
-                          <span key={index} className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
-                            <Network className="inline h-3 w-3 mr-1" />
-                            {connectedAgent?.name || connectedId}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Shared Memory</p>
-                      <p className="text-sm font-medium">{agent.sharedMemory.totalContexts} contexts</p>
-                      <p className="text-xs text-muted-foreground">Last sync: {agent.sharedMemory.lastSync}</p>
+                      <p className="text-xs text-muted-foreground">Balance</p>
+                      <p className="text-sm font-medium">{formatPrice(agent.balance)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Performance</p>
-                      <p className="text-sm font-medium">{agent.performance.successRate}% success</p>
-                      <p className="text-xs text-muted-foreground">Avg response: {agent.performance.averageResponseTime}</p>
+                      <p className="text-xs text-muted-foreground">24h P&L</p>
+                      <p className={`text-sm font-medium ${agent.pnl24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {agent.pnl24h >= 0 ? '+' : ''}{formatPrice(agent.pnl24h)} ({agent.pnlPercent.toFixed(1)}%)
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">24h Trades</p>
+                      <p className="text-sm font-medium">{agent.trades24h}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Win Rate</p>
+                      <p className="text-sm font-medium">{agent.winRate.toFixed(1)}%</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Strategy:</p>
+                      <span className="text-sm px-2 py-1 bg-blue-100 text-blue-700 rounded capitalize">
+                        {agent.strategy}
+                      </span>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Risk Settings:</p>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <span>Max Risk: {agent.settings.maxRisk}%</span>
+                        <span>Target Return: {agent.settings.targetReturn}%</span>
+                        <span>Stop Loss: {agent.settings.stopLoss}%</span>
+                        <span>Take Profit: {agent.settings.takeProfit}%</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Total Performance</p>
+                        <p className="text-sm font-medium">{agent.performance.totalTrades} trades</p>
+                        <p className="text-xs text-muted-foreground">Volume: {formatPrice(agent.performance.totalVolume)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Risk Metrics</p>
+                        <p className="text-sm font-medium">Max DD: {agent.performance.maxDrawdown.toFixed(1)}%</p>
+                        <p className="text-xs text-muted-foreground">Sharpe: {agent.performance.sharpeRatio.toFixed(2)}</p>
+                      </div>
+                    </div>
+
+                    {agent.walletAddress && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Wallet Address:</p>
+                        <code className="text-xs bg-muted px-2 py-1 rounded">
+                          {agent.walletAddress.slice(0, 6)}...{agent.walletAddress.slice(-4)}
+                        </code>
+                      </div>
+                    )}
+
+                    <div>
+                      <p className="text-xs text-muted-foreground">
+                        Created: {new Date(agent.created).toLocaleDateString()} • 
+                        Last Active: {new Date(agent.lastActive).toLocaleString()}
+                      </p>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -1,5 +1,6 @@
 'use client';
 
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { 
@@ -17,476 +18,485 @@ import {
   Clock,
   AlertTriangle,
   CheckCircle,
-  XCircle
+  XCircle,
+  Bot,
+  Users,
+  Wallet,
+  Plus
 } from "lucide-react";
-import { formatPrice, formatPercentage, formatRelativeTime } from "@/lib/utils";
-import { PortfolioPerformanceChart } from "@/components/charts/portfolio-performance-chart";
-import { useDashboardData, useBackendConnection } from "@/hooks/useBackendApi";
-import { useRealTimeData } from "@/hooks/useWebSocket";
+import { formatPrice, formatPercentage } from "@/lib/utils";
+import { useWalletStore } from '@/lib/store/walletStore';
+import { useAgentStore } from '@/lib/store/agentStore';
+import { useFarmStore } from '@/lib/store/farmStore';
+import { useRealTimeData, useLiveMarketData } from '@/lib/hooks/useRealTimeData';
+import { toast } from 'react-hot-toast';
 import Link from "next/link";
 
 export default function OverviewPage() {
-  const {
-    portfolioSummary,
-    portfolioPositions,
-    marketOverview,
-    tradingSignals,
-    agentsStatus,
-    performanceMetrics,
-    health,
-    isLoading,
-    hasErrors,
-    refreshAll,
-    errors
-  } = useDashboardData();
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const { isConnected, backendUrl, testConnection } = useBackendConnection();
+  const { 
+    totalBalance, 
+    balances, 
+    isConnected, 
+    connectWallet, 
+    refreshPrices,
+    loading: walletLoading 
+  } = useWalletStore();
   
-  // Real-time data via WebSocket
-  const {
-    portfolio: realtimePortfolio,
-    agents: realtimeAgents,
-    market: realtimeMarket,
-    signals: realtimeSignals,
-    isConnected: wsConnected,
-    connectionState,
-    lastUpdated
-  } = useRealTimeData();
+  const { 
+    agents, 
+    fetchAgents, 
+    refreshAgentData,
+    loading: agentLoading 
+  } = useAgentStore();
 
-  // Use real-time data if available, otherwise fall back to API data
-  const currentPortfolio = realtimePortfolio || portfolioSummary;
-  const currentAgents = realtimeAgents || agentsStatus;
-  const currentMarket = realtimeMarket || marketOverview;
-  const currentSignals = realtimeSignals || tradingSignals;
+  // Real-time data integration
+  const { 
+    connected: wsConnected, 
+    marketData, 
+    agentStatus, 
+    portfolio,
+    systemAlerts 
+  } = useRealTimeData({
+    symbols: ['BTC/USD', 'ETH/USD', 'USDC/USD'],
+    agentIds: agents.map(a => a.id),
+    enableMarketData: true,
+    enableAgentStatus: true,
+    enablePortfolio: true,
+    enableAlerts: true
+  });
 
-  // Connection status indicator
-  const renderConnectionStatus = () => {
-    return (
-      <div className="flex items-center gap-4 text-sm">
-        {/* API Connection Status */}
-        <div className="flex items-center gap-2">
-          {isConnected === null ? (
-            <>
-              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
-              <span className="text-muted-foreground">API connecting...</span>
-            </>
-          ) : isConnected ? (
-            <>
-              <CheckCircle className="h-3 w-3 text-green-600" />
-              <span className="text-green-600">API connected</span>
-            </>
-          ) : (
-            <>
-              <XCircle className="h-3 w-3 text-red-600" />
-              <span className="text-red-600">API disconnected</span>
-              <Button variant="outline" size="sm" onClick={testConnection}>
-                Reconnect
-              </Button>
-            </>
-          )}
-        </div>
+  const { data: liveMarketData, loading: marketLoading } = useLiveMarketData(['BTC/USD', 'ETH/USD', 'USDC/USD']);
+  
+  const { 
+    farms, 
+    fetchFarms,
+    loading: farmLoading 
+  } = useFarmStore();
 
-        {/* WebSocket Connection Status */}
-        <div className="flex items-center gap-2">
-          {connectionState === 'connecting' ? (
-            <>
-              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
-              <span className="text-muted-foreground">WebSocket connecting...</span>
-            </>
-          ) : wsConnected ? (
-            <>
-              <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
-              <span className="text-green-600">Live updates</span>
-            </>
-          ) : (
-            <>
-              <div className="h-2 w-2 rounded-full bg-red-500"></div>
-              <span className="text-red-600">No live updates</span>
-            </>
-          )}
-        </div>
-      </div>
-    );
+  useEffect(() => {
+    // Initial data fetch
+    fetchAgents();
+    fetchFarms();
+    if (isConnected) {
+      refreshPrices();
+    }
+  }, [fetchAgents, fetchFarms, isConnected, refreshPrices]);
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (autoRefresh) {
+      const interval = setInterval(() => {
+        if (isConnected) {
+          refreshPrices();
+        }
+        agents.forEach(agent => refreshAgentData(agent.id));
+      }, 30000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [autoRefresh, isConnected, refreshPrices, agents, refreshAgentData]);
+
+  // Calculate metrics
+  const totalAgentValue = agents.reduce((sum, agent) => sum + agent.balance, 0);
+  const totalFarmValue = farms.reduce((sum, farm) => sum + farm.totalValue, 0);
+  const activeAgents = agents.filter(agent => agent.status === 'active').length;
+  const activeFarms = farms.filter(farm => farm.status === 'active').length;
+  const totalPnl24h = agents.reduce((sum, agent) => sum + agent.pnl24h, 0) + 
+                     farms.reduce((sum, farm) => sum + farm.pnl24h, 0);
+  const totalTrades24h = agents.reduce((sum, agent) => sum + agent.trades24h, 0);
+  const avgWinRate = agents.length > 0 ? agents.reduce((sum, agent) => sum + agent.winRate, 0) / agents.length : 0;
+
+  const portfolioTotal = totalBalance + totalAgentValue + totalFarmValue;
+  const pnlPercent = portfolioTotal > 0 ? (totalPnl24h / portfolioTotal) * 100 : 0;
+
+  const isLoading = walletLoading || agentLoading || farmLoading;
+
+  const handleRefreshAll = async () => {
+    try {
+      if (isConnected) {
+        await refreshPrices();
+      }
+      await Promise.all([
+        fetchAgents(),
+        fetchFarms(),
+        ...agents.map(agent => refreshAgentData(agent.id))
+      ]);
+      toast.success('Data refreshed successfully');
+    } catch (error) {
+      toast.error('Failed to refresh data');
+    }
   };
-
-  // Handle loading state
-  if (isLoading && !portfolioSummary) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Dashboard Overview</h1>
-            <p className="text-muted-foreground">Loading your trading performance data...</p>
-            {renderConnectionStatus()}
-          </div>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardHeader className="space-y-0 pb-2">
-                <div className="h-4 bg-gray-200 rounded w-24"></div>
-              </CardHeader>
-              <CardContent>
-                <div className="h-8 bg-gray-200 rounded w-32 mb-2"></div>
-                <div className="h-3 bg-gray-200 rounded w-40"></div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // Handle error state
-  if (hasErrors && !portfolioSummary) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Dashboard Overview</h1>
-            <p className="text-muted-foreground text-red-600">Failed to load portfolio data</p>
-            {renderConnectionStatus()}
-          </div>
-          <Button onClick={refreshAll} variant="outline">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Retry
-          </Button>
-        </div>
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <div className="space-y-2">
-              {Object.entries(errors).map(([key, error]) => error && (
-                <p key={key} className="text-red-800">
-                  <strong>{key}:</strong> {error}
-                </p>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  // If we have no data yet, show loading
-  if (!currentPortfolio) {
-    return (
-      <div className="space-y-6">
-        <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="text-muted-foreground mt-4">Loading portfolio data...</p>
-          {renderConnectionStatus()}
-        </div>
-      </div>
-    );
-  }
-
-  // Prepare metrics data from current data (real-time or API)
-  const metricsData = [
-    {
-      title: "Total Portfolio Value",
-      value: currentPortfolio.total_equity,
-      change: currentPortfolio.daily_pnl,
-      changePercent: (currentPortfolio.daily_pnl / (currentPortfolio.total_equity - currentPortfolio.daily_pnl)) * 100,
-      icon: DollarSign,
-      format: "currency",
-    },
-    {
-      title: "Active Agents",
-      value: currentAgents?.filter(agent => agent.status === 'active').length || 0,
-      change: 1,
-      changePercent: 5.0,
-      icon: Activity,
-      format: "number",
-    },
-    {
-      title: "Total Return",
-      value: currentPortfolio.total_return_percent,
-      change: currentPortfolio.daily_pnl,
-      changePercent: 1.4,
-      icon: Target,
-      format: "percentage",
-    },
-    {
-      title: "Total Positions",
-      value: currentPortfolio.number_of_positions,
-      change: 0,
-      changePercent: 0,
-      icon: BarChart3,
-      format: "number",
-    },
-  ];
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard Overview</h1>
-          <div className="flex items-center gap-4 text-muted-foreground">
-            <span>Monitor your algorithmic trading performance and system health</span>
-            {renderConnectionStatus()}
-          </div>
+          <h1 className="text-3xl font-bold tracking-tight">Trading Overview</h1>
+          <p className="text-muted-foreground">
+            Monitor your autonomous trading portfolio and agent performance
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          {wsConnected && (
-            <div className="flex items-center gap-2 text-sm text-green-600 mr-4">
-              <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
-              <span>Live Data</span>
-              {lastUpdated.portfolio && (
-                <span className="text-xs text-muted-foreground">
-                  Updated {Math.round((Date.now() - lastUpdated.portfolio.getTime()) / 1000)}s ago
-                </span>
-              )}
-            </div>
-          )}
-          <Button variant="outline" onClick={refreshAll} disabled={isLoading}>
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => setAutoRefresh(!autoRefresh)}
+          >
+            <Clock className={`mr-2 h-4 w-4 ${autoRefresh ? 'text-green-500' : 'text-gray-400'}`} />
+            Auto-refresh {autoRefresh ? 'ON' : 'OFF'}
+          </Button>
+          <Button variant="outline" onClick={handleRefreshAll} disabled={isLoading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            {isLoading ? 'Refreshing...' : 'Refresh'}
-          </Button>
-          <Button variant="outline" asChild>
-            <Link href="/dashboard/risk">
-              <Shield className="mr-2 h-4 w-4" />
-              Risk Report
-            </Link>
-          </Button>
-          <Button asChild>
-            <Link href="/dashboard/strategies">
-              <Zap className="mr-2 h-4 w-4" />
-              Manage Strategies
-            </Link>
+            Refresh
           </Button>
         </div>
       </div>
 
-      {/* Key Metrics Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {metricsData.map((metric) => {
-          const Icon = metric.icon;
-          const isPositive = metric.change > 0;
-          
-          return (
-            <Card key={metric.title} className={isLoading ? 'opacity-75' : ''}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  {metric.title}
-                </CardTitle>
-                <Icon className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {metric.format === "currency" && formatPrice(metric.value)}
-                  {metric.format === "percentage" && `${metric.value.toFixed(1)}%`}
-                  {metric.format === "number" && metric.value.toLocaleString()}
-                </div>
-                <p className={`text-xs ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
-                  {isPositive ? '+' : ''}{metric.format === "currency" ? formatPrice(metric.change) : metric.change} 
-                  ({formatPercentage(metric.changePercent / 100)}) from yesterday
-                </p>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Active Trading Agents */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Trading Agents</CardTitle>
-            <CardDescription>
-              Performance overview of your AI trading agents
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {currentAgents?.map((agent) => (
-                <div key={agent.agent_id} className="flex items-center justify-between p-3 rounded-lg border">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-2 h-2 rounded-full ${
-                      agent.status === 'active' ? 'bg-green-500' : 
-                      agent.status === 'monitoring' ? 'bg-yellow-500' : 'bg-red-500'
-                    }`}></div>
-                    <div>
-                      <p className="font-medium">{agent.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {agent.trades_today} trades today • {(agent.win_rate * 100).toFixed(1)}% win rate • {agent.strategy}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={`font-semibold ${
-                      agent.pnl > 0 ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {agent.pnl > 0 ? '+' : ''}${agent.pnl.toFixed(2)}
-                    </p>
-                    <p className="text-sm text-muted-foreground capitalize">
-                      {agent.status}
-                    </p>
-                  </div>
-                </div>
-              )) || (
-                <p className="text-muted-foreground text-center py-4">No agent data available</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* System Health */}
-        <Card>
-          <CardHeader>
-            <CardTitle>System Health</CardTitle>
-            <CardDescription>
-              Monitor the status of all trading system components
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {health?.services ? Object.entries(health.services).map(([serviceName, serviceStatus]) => (
-                <div key={serviceName} className="flex items-center justify-between p-3 rounded-lg border">
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-2 h-2 rounded-full ${
-                      serviceStatus.status === 'running' ? 'bg-green-500' : 'bg-red-500'
-                    }`}></div>
-                    <div>
-                      <p className="font-medium">{serviceName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {serviceStatus.service || 'Trading Service'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={`text-sm capitalize font-medium ${
-                      serviceStatus.status === 'running' ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {serviceStatus.status}
-                    </p>
-                  </div>
-                </div>
-              )) : (
-                <p className="text-muted-foreground text-center py-4">No health data available</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Portfolio Performance Visualization */}
-      <Card className="border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/50">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <LineChart className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+      {/* Connection Status */}
+      {!isConnected && (
+        <Card className="border-yellow-200 bg-yellow-50">
+          <CardContent className="flex items-center justify-between p-4">
+            <div className="flex items-center space-x-3">
+              <AlertTriangle className="h-5 w-5 text-yellow-600" />
               <div>
-                <CardTitle className="text-lg text-blue-900 dark:text-blue-100">
-                  Live Portfolio Performance
-                </CardTitle>
-                <CardDescription className="text-blue-700 dark:text-blue-300">
-                  Python-powered real-time analytics and visualization
-                </CardDescription>
+                <p className="font-medium text-yellow-800">Wallet Not Connected</p>
+                <p className="text-sm text-yellow-600">Connect your wallet to start trading with real funds</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" asChild>
-                <Link href="/dashboard/analytics">
-                  <BarChart3 className="mr-2 h-4 w-4" />
-                  Full Analytics
-                  <ExternalLink className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <PortfolioPerformanceChart height={350} autoRefresh={true} />
-        </CardContent>
-      </Card>
+            <Button onClick={connectWallet}>
+              <Wallet className="mr-2 h-4 w-4" />
+              Connect Wallet
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Portfolio Holdings */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Portfolio Holdings</CardTitle>
-          <CardDescription>
-            Current positions and their performance
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {portfolioPositions?.map((position) => (
-              <div key={position.symbol} className="flex items-center justify-between p-3 rounded-lg border">
-                <div className="flex items-center space-x-3">
-                  <div>
-                    <p className="font-medium">{position.symbol}</p>
-                    <p className="text-sm text-muted-foreground">Cryptocurrency</p>
-                  </div>
+      {/* Portfolio Overview */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Total Portfolio</p>
+                <p className="text-3xl font-bold">{formatPrice(portfolioTotal)}</p>
+                <p className={`text-xs ${totalPnl24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {totalPnl24h >= 0 ? '+' : ''}{formatPrice(totalPnl24h)} ({pnlPercent.toFixed(2)}%)
+                </p>
+              </div>
+              <DollarSign className="h-8 w-8 text-blue-500" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Active Agents</p>
+                <p className="text-3xl font-bold">{activeAgents}</p>
+                <p className="text-xs text-muted-foreground">of {agents.length} total</p>
+              </div>
+              <Bot className="h-8 w-8 text-green-500" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Active Farms</p>
+                <p className="text-3xl font-bold">{activeFarms}</p>
+                <p className="text-xs text-muted-foreground">of {farms.length} total</p>
+              </div>
+              <Users className="h-8 w-8 text-purple-500" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">24h Trades</p>
+                <p className="text-3xl font-bold">{totalTrades24h}</p>
+                <p className="text-xs text-muted-foreground">Avg win: {avgWinRate.toFixed(1)}%</p>
+              </div>
+              <Activity className="h-8 w-8 text-orange-500" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card className="cursor-pointer hover:shadow-md transition-shadow">
+          <Link href="/dashboard/vault">
+            <CardContent className="p-6">
+              <div className="flex items-center space-x-4">
+                <div className="p-3 bg-blue-100 rounded-lg">
+                  <Wallet className="h-6 w-6 text-blue-600" />
                 </div>
-                <div className="flex items-center space-x-6 text-sm">
-                  <div className="text-right">
-                    <p className="font-medium">{position.quantity.toLocaleString()} units</p>
-                    <p className="text-muted-foreground">@ ${position.avg_cost.toFixed(2)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium">${position.market_value.toFixed(2)}</p>
-                    <p className="text-muted-foreground">${position.current_price.toFixed(2)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`font-medium ${position.unrealized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {position.unrealized_pnl >= 0 ? '+' : ''}${position.unrealized_pnl.toFixed(2)}
-                    </p>
-                    <p className={`text-sm ${position.pnl_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {position.pnl_percent >= 0 ? '+' : ''}{position.pnl_percent.toFixed(2)}%
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium">{portfolioSummary ? ((position.market_value / portfolioSummary.total_equity) * 100).toFixed(1) : '0'}%</p>
-                    <p className="text-muted-foreground">allocation</p>
-                  </div>
+                <div>
+                  <h3 className="font-semibold">Manage Wallet</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Deposit funds and transfer to agents
+                  </p>
+                  <p className="text-lg font-bold text-blue-600">
+                    {formatPrice(totalBalance)}
+                  </p>
                 </div>
               </div>
-            )) || (
-              <p className="text-muted-foreground text-center py-4">No positions available</p>
+            </CardContent>
+          </Link>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow">
+          <Link href="/dashboard/agents">
+            <CardContent className="p-6">
+              <div className="flex items-center space-x-4">
+                <div className="p-3 bg-green-100 rounded-lg">
+                  <Bot className="h-6 w-6 text-green-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">Manage Agents</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Create and fund trading agents
+                  </p>
+                  <p className="text-lg font-bold text-green-600">
+                    {formatPrice(totalAgentValue)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Link>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow">
+          <Link href="/dashboard/farms">
+            <CardContent className="p-6">
+              <div className="flex items-center space-x-4">
+                <div className="p-3 bg-purple-100 rounded-lg">
+                  <Users className="h-6 w-6 text-purple-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">Manage Farms</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Organize agent groups
+                  </p>
+                  <p className="text-lg font-bold text-purple-600">
+                    {formatPrice(totalFarmValue)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Link>
+        </Card>
+      </div>
+
+      {/* Agent Performance */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Performing Agents</CardTitle>
+            <CardDescription>
+              Best performing agents in the last 24 hours
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {agents.length === 0 ? (
+              <div className="text-center py-8">
+                <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-500">No agents created yet</p>
+                <Button asChild className="mt-4">
+                  <Link href="/dashboard/agents">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Your First Agent
+                  </Link>
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {agents
+                  .sort((a, b) => b.pnlPercent - a.pnlPercent)
+                  .slice(0, 5)
+                  .map((agent) => (
+                    <div key={agent.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className={`h-3 w-3 rounded-full ${
+                          agent.status === 'active' ? 'bg-green-500' : 
+                          agent.status === 'paused' ? 'bg-yellow-500' : 'bg-gray-500'
+                        }`} />
+                        <div>
+                          <p className="font-medium">{agent.name}</p>
+                          <p className="text-sm text-gray-600 capitalize">{agent.type}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold">{formatPrice(agent.balance)}</p>
+                        <p className={`text-sm ${agent.pnl24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {agent.pnl24h >= 0 ? '+' : ''}{formatPrice(agent.pnl24h)} ({agent.pnlPercent.toFixed(1)}%)
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+              </div>
             )}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      {/* Trading Signals */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Trading Signals</CardTitle>
-          <CardDescription>
-            Latest AI-generated trading recommendations
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {(currentSignals || []).slice(0, 5).map((signal, index) => (
-              <div key={index} className="flex items-center justify-between p-3 rounded-lg border">
+        <Card>
+          <CardHeader>
+            <CardTitle>Portfolio Allocation</CardTitle>
+            <CardDescription>
+              Distribution of funds across wallets, agents, and farms
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 border rounded-lg">
                 <div className="flex items-center space-x-3">
-                  <div className={`w-2 h-2 rounded-full ${
-                    signal.signal === 'buy' ? 'bg-green-500' : 
-                    signal.signal === 'sell' ? 'bg-red-500' : 'bg-yellow-500'
-                  }`}></div>
-                  <div>
-                    <p className="font-medium">{signal.symbol}</p>
-                    <p className="text-sm text-muted-foreground">{signal.reasoning}</p>
-                  </div>
+                  <Wallet className="h-5 w-5 text-blue-500" />
+                  <span className="font-medium">Wallet Balance</span>
                 </div>
                 <div className="text-right">
-                  <p className={`font-semibold capitalize ${
-                    signal.signal === 'buy' ? 'text-green-600' : 
-                    signal.signal === 'sell' ? 'text-red-600' : 'text-yellow-600'
-                  }`}>
-                    {signal.signal}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {(signal.confidence * 100).toFixed(0)}% confidence
+                  <p className="font-semibold">{formatPrice(totalBalance)}</p>
+                  <p className="text-sm text-gray-600">
+                    {portfolioTotal > 0 ? ((totalBalance / portfolioTotal) * 100).toFixed(1) : 0}%
                   </p>
                 </div>
               </div>
-            )) || (
-              <p className="text-muted-foreground text-center py-4">No trading signals available</p>
-            )}
+
+              <div className="flex items-center justify-between p-3 border rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Bot className="h-5 w-5 text-green-500" />
+                  <span className="font-medium">Agent Balances</span>
+                </div>
+                <div className="text-right">
+                  <p className="font-semibold">{formatPrice(totalAgentValue)}</p>
+                  <p className="text-sm text-gray-600">
+                    {portfolioTotal > 0 ? ((totalAgentValue / portfolioTotal) * 100).toFixed(1) : 0}%
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 border rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Users className="h-5 w-5 text-purple-500" />
+                  <span className="font-medium">Farm Values</span>
+                </div>
+                <div className="text-right">
+                  <p className="font-semibold">{formatPrice(totalFarmValue)}</p>
+                  <p className="text-sm text-gray-600">
+                    {portfolioTotal > 0 ? ((totalFarmValue / portfolioTotal) * 100).toFixed(1) : 0}%
+                  </p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* System Status */}
+      <Card>
+        <CardHeader>
+          <CardTitle>System Status</CardTitle>
+          <CardDescription>
+            Overview of trading system health and connectivity
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="flex items-center space-x-3 p-3 border rounded-lg">
+              <CheckCircle className="h-5 w-5 text-green-500" />
+              <div>
+                <p className="font-medium">Trading Engine</p>
+                <p className="text-sm text-gray-600">Operational</p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-3 p-3 border rounded-lg">
+              {isConnected ? (
+                <CheckCircle className="h-5 w-5 text-green-500" />
+              ) : (
+                <XCircle className="h-5 w-5 text-red-500" />
+              )}
+              <div>
+                <p className="font-medium">Wallet Connection</p>
+                <p className="text-sm text-gray-600">
+                  {isConnected ? 'Connected' : 'Disconnected'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-3 p-3 border rounded-lg">
+              <CheckCircle className="h-5 w-5 text-green-500" />
+              <div>
+                <p className="font-medium">Data Services</p>
+                <p className="text-sm text-gray-600">Online</p>
+              </div>
+            </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Recent Activity */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Recent Activity</CardTitle>
+              <CardDescription>
+                Latest agent actions and performance updates
+              </CardDescription>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/analytics">
+                <BarChart3 className="mr-2 h-4 w-4" />
+                View Analytics
+              </Link>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {agents.length === 0 ? (
+            <div className="text-center py-8">
+              <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-500">No recent activity</p>
+              <p className="text-sm text-gray-400">Create agents to start seeing trading activity</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {agents
+                .filter(agent => agent.trades24h > 0)
+                .sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime())
+                .slice(0, 10)
+                .map((agent) => (
+                  <div key={agent.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                    <div className="flex items-center space-x-3">
+                      <Bot className="h-4 w-4 text-blue-500" />
+                      <div>
+                        <p className="font-medium">{agent.name}</p>
+                        <p className="text-sm text-gray-600">
+                          {agent.trades24h} trades • Win rate: {agent.winRate.toFixed(1)}%
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-medium ${agent.pnl24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {agent.pnl24h >= 0 ? '+' : ''}{formatPrice(agent.pnl24h)}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        {new Date(agent.lastActive).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

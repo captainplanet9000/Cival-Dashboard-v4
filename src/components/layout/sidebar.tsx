@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {  BarChart3,  TrendingUp,  ShoppingCart,  Shield,  Vault,  Zap,  PieChart,  Home,  Settings,  User,  Bot,  Brain,  Target,} from "lucide-react";
+import {  BarChart3,  TrendingUp,  ShoppingCart,  Shield,  Vault,  Zap,  PieChart,  Home,  Settings,  User,  Bot,  Brain,  Target,  Users,  Wallet,  Layers} from "lucide-react";
 
 const navigation = [
   {
@@ -12,9 +12,34 @@ const navigation = [
     icon: Home,
   },
   {
-    name: "Strategies",
-    href: "/dashboard/strategies",
-    icon: TrendingUp,
+    name: "Agents",
+    href: "/dashboard/agents",
+    icon: Bot,
+  },
+  {
+    name: "Farms",
+    href: "/dashboard/farms",
+    icon: Users,
+  },
+  {
+    name: "Goals",
+    href: "/dashboard/goals",
+    icon: Target,
+  },
+  {
+    name: "DeFi Lending",
+    href: "/dashboard/defi-lending",
+    icon: Layers,
+  },
+  {
+    name: "Python Analysis",
+    href: "/dashboard/python-analysis",
+    icon: Brain,
+  },
+  {
+    name: "Eliza AI",
+    href: "/dashboard/eliza",
+    icon: Zap,
   },
   {
     name: "Trading",
@@ -22,61 +47,24 @@ const navigation = [
     icon: ShoppingCart,
   },
   {
-    name: "AI Enhanced",
-    href: "/dashboard/ai-enhanced",
-    icon: Brain,
-  },
-  {
-    name: "Risk Management",
-    href: "/dashboard/risk",
-    icon: Shield,
-  },
-  {
-    name: "Vault Banking",
-    href: "/dashboard/vault",
-    icon: Vault,
-  },
-  {
-    name: "Data Management",
-    href: "/dashboard/data-management",
-    icon: () => (
-      <svg 
-        xmlns="http://www.w3.org/2000/svg" 
-        viewBox="0 0 24 24" 
-        fill="none" 
-        stroke="currentColor" 
-        strokeWidth="2" 
-        strokeLinecap="round" 
-        strokeLinejoin="round" 
-        className="h-4 w-4"
-      >
-        <path d="M20 11.08V8l-6-6H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2v-3.08" />
-        <path d="M14 3v5h5" />
-        <rect x="8" y="12" width="8" height="2" />
-        <rect x="8" y="16" width="8" height="2" />
-        <path d="M22 13h-4c-.5 0-1 .2-1.4.6l-.6.6c-.4.4-.9.6-1.4.6h-2c-.5 0-1-.2-1.4-.6l-.6-.6c-.4-.4-.9-.6-1.4-.6H5" />
-      </svg>
-    ),
-  },
-  {
-    name: "Phase 8: AI Goals",
-    href: "/dashboard/phase8",
-    icon: Target,
-  },
-  {
-    name: "MCP Servers",
-    href: "/dashboard/mcp",
-    icon: Zap,
-  },
-  {
-    name: "Agents",
-    href: "/dashboard/agents",
-    icon: Bot,
+    name: "Portfolio",
+    href: "/portfolio",
+    icon: PieChart,
   },
   {
     name: "Analytics",
-    href: "/dashboard/analytics",
-    icon: PieChart,
+    href: "/analytics",
+    icon: BarChart3,
+  },
+  {
+    name: "Risk Management",
+    href: "/risk",
+    icon: Shield,
+  },
+  {
+    name: "Wallet",
+    href: "/dashboard/vault",
+    icon: Wallet,
   },
 ];
 

@@ -40,7 +40,15 @@
     "monorepo:setup": "npm run setup:env && npm install && npm run ai:install"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/server": "^11.11.0",
     "@hookform/resolvers": "^3.3.0",
+    "@mantine/charts": "^8.1.1",
+    "@mantine/core": "^8.1.1",
+    "@mantine/dates": "^8.1.1",
+    "@mantine/form": "^8.1.1",
+    "@mantine/hooks": "^8.1.1",
+    "@mantine/notifications": "^8.1.1",
     "@radix-ui/react-alert-dialog": "^1.1.0",
     "@radix-ui/react-avatar": "^1.1.0",
     "@radix-ui/react-checkbox": "^1.1.0",
