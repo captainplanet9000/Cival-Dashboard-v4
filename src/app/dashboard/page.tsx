@@ -1,10 +1,10 @@
 /**
  * Main Dashboard Page
- * Comprehensive real-time trading dashboard with all integrated components
+ * Modern, mobile-responsive trading dashboard with enhanced UX
  */
 
-import { RealTimeDashboard } from '@/components/dashboard/RealTimeDashboard'
+import { ModernDashboard } from '@/components/dashboard/ModernDashboard'
 
 export default function DashboardPage() {
-  return <RealTimeDashboard />
+  return <ModernDashboard />
 }

@@ -41,6 +41,11 @@ import { AgentManager } from '../trading/AgentManager'
 import { TradingCharts } from '../trading/TradingCharts'
 import { RiskDashboard } from '../trading/RiskDashboard'
 
+// Store imports for real database integration
+import { useWalletStore } from '@/lib/store/walletStore'
+import { useAgentStore } from '@/lib/store/agentStore'
+import { useFarmStore } from '@/lib/store/farmStore'
+
 // AG-UI Protocol integration
 import { subscribe, emit, getAGUIEventBus, type TradingEvents, type AgentEvents, type WalletEvents } from '@/lib/ag-ui-protocol-v2'
 import { logger } from '@/lib/error-handling/logger'
@@ -91,17 +96,22 @@ interface RealtimeData {
 }
 
 export function RealTimeDashboard() {
+  // Store integration for real database data
+  const walletStore = useWalletStore()
+  const agentStore = useAgentStore()
+  const farmStore = useFarmStore()
+
   // State Management
   const [metrics, setMetrics] = useState<DashboardMetrics>({
-    portfolioValue: 0,
+    portfolioValue: walletStore.totalBalance || 0,
     dailyPnl: 0,
     dailyPnlPercent: 0,
     totalReturn: 0,
     totalReturnPercent: 0,
-    positions: 0,
+    positions: walletStore.balances.filter(b => b.amount > 0).length || 0,
     orders: 0,
-    agents: 0,
-    activeAgents: 0,
+    agents: agentStore.agents.length || 0,
+    activeAgents: agentStore.agents.filter(a => a.status === 'active').length || 0,
     signals: 0,
     riskScore: 0,
     marketStatus: 'closed',
@@ -115,6 +125,55 @@ export function RealTimeDashboard() {
   const [selectedView, setSelectedView] = useState<'overview' | 'trading' | 'portfolio' | 'agents' | 'charts' | 'risk'>('overview')
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(true)
+
+  // Initialize stores with real database data
+  useEffect(() => {
+    const initializeStores = async () => {
+      try {
+        setIsLoading(true)
+        logger.info('Initializing dashboard stores with real database data...')
+        
+        // Initialize all stores concurrently
+        await Promise.all([
+          walletStore.initialize(),
+          agentStore.initialize(),
+          farmStore.initialize()
+        ])
+        
+        // Update metrics with real data from stores
+        setMetrics(prev => ({
+          ...prev,
+          portfolioValue: walletStore.totalBalance,
+          positions: walletStore.balances.filter(b => b.amount > 0).length,
+          agents: agentStore.agents.length,
+          activeAgents: agentStore.agents.filter(a => a.status === 'active').length,
+          lastUpdate: Date.now()
+        }))
+        
+        logger.info('Dashboard stores initialized successfully')
+        addAlert('success', 'Real database connection established', 'system')
+        
+      } catch (error) {
+        logger.error('Failed to initialize dashboard stores', error)
+        addAlert('error', 'Failed to connect to database', 'system')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    
+    initializeStores()
+  }, [])
+
+  // Update metrics when store data changes
+  useEffect(() => {
+    setMetrics(prev => ({
+      ...prev,
+      portfolioValue: walletStore.totalBalance,
+      positions: walletStore.balances.filter(b => b.amount > 0).length,
+      agents: agentStore.agents.length,
+      activeAgents: agentStore.agents.filter(a => a.status === 'active').length
+    }))
+  }, [walletStore.totalBalance, walletStore.balances, agentStore.agents])
 
   // AG-UI Event Bus Integration
   useEffect(() => {

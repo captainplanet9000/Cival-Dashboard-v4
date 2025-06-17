@@ -1,31 +1,37 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { backendApi } from '@/lib/api/backend-client';
+import { db, getDemoUser } from '@/lib/supabase/client';
 
-interface Farm {
+export interface Farm {
   id: string;
   name: string;
   description: string;
-  agents: string[];
+  type: 'yield' | 'arbitrage' | 'momentum' | 'balanced' | 'conservative' | 'aggressive';
   strategy: string;
-  status: 'active' | 'inactive' | 'paused';
-  totalValue: number;
-  pnl24h: number;
-  pnlPercent: number;
-  performance: {
-    totalTrades: number;
-    winRate: number;
-    avgReturn: number;
-    maxDrawdown: number;
-  };
-  created: string;
-  lastActive: string;
-  settings: {
-    maxRisk: number;
-    targetReturn: number;
-    rebalanceFrequency: string;
-    emergencyStop: boolean;
-  };
+  status: 'active' | 'inactive' | 'paused' | 'optimizing';
+  totalAllocated: number;
+  currentValue: number;
+  totalPnL: number;
+  performanceTarget: number;
+  riskTolerance: 'low' | 'medium' | 'high';
+  configuration: any;
+  performanceMetrics: any;
+  assignedAgents: FarmAgent[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FarmAgent {
+  id: string;
+  farmId: string;
+  agentId: string;
+  agentName: string;
+  allocationPercentage: number;
+  role: 'trader' | 'scout' | 'risk_manager' | 'coordinator';
+  assignedAt: string;
+  agentStatus?: string;
+  agentBalance?: number;
+  agentPnL?: number;
 }
 
 interface FarmStore {
@@ -33,19 +39,20 @@ interface FarmStore {
   selectedFarm: Farm | null;
   loading: boolean;
   error: string | null;
-  
+  userId: string | null;
+
   // Actions
-  fetchFarms: () => Promise<void>;
-  createFarm: (farmData: Partial<Farm>) => Promise<void>;
+  initialize: () => Promise<void>;
+  loadFarms: () => Promise<void>;
+  createFarm: (farmData: Partial<Farm>) => Promise<Farm>;
   updateFarm: (id: string, updates: Partial<Farm>) => Promise<void>;
   deleteFarm: (id: string) => Promise<void>;
-  startFarm: (id: string) => Promise<void>;
-  stopFarm: (id: string) => Promise<void>;
-  pauseFarm: (id: string) => Promise<void>;
-  addAgentToFarm: (farmId: string, agentId: string) => Promise<void>;
+  assignAgentToFarm: (farmId: string, agentId: string, allocation: number, role: string) => Promise<void>;
   removeAgentFromFarm: (farmId: string, agentId: string) => Promise<void>;
-  setSelectedFarm: (farm: Farm | null) => void;
-  refreshFarmData: (id: string) => Promise<void>;
+  optimizeFarm: (id: string) => Promise<void>;
+  selectFarm: (farm: Farm | null) => void;
+  getFarmPerformance: (farmId: string) => Promise<any>;
+  createSampleFarm: () => Promise<void>;
 }
 
 export const useFarmStore = create<FarmStore>()(
@@ -55,241 +62,435 @@ export const useFarmStore = create<FarmStore>()(
       selectedFarm: null,
       loading: false,
       error: null,
+      userId: null,
 
-      fetchFarms: async () => {
-        set({ loading: true, error: null });
+      initialize: async () => {
         try {
-          // Use mock data for now, replace with real API call
-          const mockFarms: Farm[] = [
-            {
-              id: 'farm-1',
-              name: 'Momentum Traders',
-              description: 'High-frequency momentum trading strategies',
-              agents: ['agent-1', 'agent-2', 'agent-3'],
-              strategy: 'momentum',
-              status: 'active',
-              totalValue: 25000,
-              pnl24h: 1250,
-              pnlPercent: 5.2,
-              performance: {
-                totalTrades: 1247,
-                winRate: 68.5,
-                avgReturn: 0.32,
-                maxDrawdown: -8.4
-              },
-              created: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-              lastActive: new Date().toISOString(),
-              settings: {
-                maxRisk: 5,
-                targetReturn: 15,
-                rebalanceFrequency: 'hourly',
-                emergencyStop: true
-              }
-            },
-            {
-              id: 'farm-2',
-              name: 'Arbitrage Hunters',
-              description: 'Cross-exchange arbitrage opportunities',
-              agents: ['agent-4', 'agent-5'],
-              strategy: 'arbitrage',
-              status: 'active',
-              totalValue: 18500,
-              pnl24h: 740,
-              pnlPercent: 4.1,
-              performance: {
-                totalTrades: 892,
-                winRate: 74.2,
-                avgReturn: 0.28,
-                maxDrawdown: -5.2
-              },
-              created: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(),
-              lastActive: new Date().toISOString(),
-              settings: {
-                maxRisk: 3,
-                targetReturn: 12,
-                rebalanceFrequency: 'real-time',
-                emergencyStop: true
-              }
-            },
-            {
-              id: 'farm-3',
-              name: 'DeFi Yield Farm',
-              description: 'Automated yield farming and liquidity provision',
-              agents: ['agent-6'],
-              strategy: 'defi-yield',
-              status: 'paused',
-              totalValue: 12000,
-              pnl24h: -120,
-              pnlPercent: -1.0,
-              performance: {
-                totalTrades: 234,
-                winRate: 62.8,
-                avgReturn: 0.15,
-                maxDrawdown: -12.1
-              },
-              created: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-              lastActive: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-              settings: {
-                maxRisk: 8,
-                targetReturn: 20,
-                rebalanceFrequency: 'daily',
-                emergencyStop: false
-              }
-            }
-          ];
+          set({ loading: true });
           
-          set({ farms: mockFarms, loading: false });
+          // Get demo user
+          const user = await getDemoUser();
+          if (!user) {
+            throw new Error('Failed to initialize user');
+          }
+
+          set({ userId: user.id });
+          await get().loadFarms();
+          
         } catch (error) {
-          set({ error: 'Failed to fetch farms', loading: false });
-          console.error('Fetch farms error:', error);
+          console.error('Farm store initialization error:', error);
+          set({ error: 'Failed to initialize farms', loading: false });
         }
       },
 
-      createFarm: async (farmData) => {
-        set({ loading: true, error: null });
+      loadFarms: async () => {
         try {
-          const newFarm: Farm = {
-            id: `farm-${Date.now()}`,
+          set({ loading: true, error: null });
+          const { userId } = get();
+          
+          if (!userId) {
+            throw new Error('User not initialized');
+          }
+
+          // Load farms from database with assigned agents
+          const farmsData = await db.getFarms(userId);
+          
+          // Convert database format to store format
+          const farms: Farm[] = farmsData.map(farm => ({
+            id: farm.id,
+            name: farm.name,
+            description: farm.description || '',
+            type: farm.farm_type as any,
+            strategy: farm.strategy,
+            status: farm.status as any,
+            totalAllocated: farm.total_allocated || 0,
+            currentValue: farm.current_value || 0,
+            totalPnL: farm.total_pnl || 0,
+            performanceTarget: farm.performance_target || 0,
+            riskTolerance: farm.risk_tolerance as any,
+            configuration: farm.configuration || {},
+            performanceMetrics: farm.performance_metrics || {},
+            assignedAgents: (farm.farm_agents || []).map((fa: any) => ({
+              id: fa.id,
+              farmId: farm.id,
+              agentId: fa.agent_id,
+              agentName: fa.agents?.name || 'Unknown Agent',
+              allocationPercentage: fa.allocation_percentage || 0,
+              role: fa.role,
+              assignedAt: fa.assigned_at,
+              agentStatus: fa.agents?.status,
+              agentBalance: fa.agents?.current_balance,
+              agentPnL: fa.agents?.total_pnl
+            })),
+            createdAt: farm.created_at,
+            updatedAt: farm.updated_at
+          }));
+
+          // If no farms exist, create sample farm for demo
+          if (farms.length === 0) {
+            await get().createSampleFarm();
+            // Reload after creating sample farm
+            return get().loadFarms();
+          }
+
+          set({ farms, loading: false });
+
+        } catch (error) {
+          console.error('Load farms error:', error);
+          set({ error: 'Failed to load farms', loading: false });
+        }
+      },
+
+      createFarm: async (farmData: Partial<Farm>) => {
+        try {
+          set({ loading: true, error: null });
+          const { userId } = get();
+          
+          if (!userId) {
+            throw new Error('User not initialized');
+          }
+
+          const newFarmData = {
+            user_id: userId,
             name: farmData.name || 'New Farm',
             description: farmData.description || '',
-            agents: farmData.agents || [],
-            strategy: farmData.strategy || 'custom',
+            farm_type: farmData.type || 'balanced',
+            strategy: farmData.strategy || 'diversified',
             status: 'inactive',
-            totalValue: 0,
-            pnl24h: 0,
-            pnlPercent: 0,
-            performance: {
-              totalTrades: 0,
-              winRate: 0,
-              avgReturn: 0,
-              maxDrawdown: 0
-            },
-            created: new Date().toISOString(),
-            lastActive: new Date().toISOString(),
-            settings: {
-              maxRisk: farmData.settings?.maxRisk || 5,
-              targetReturn: farmData.settings?.targetReturn || 15,
-              rebalanceFrequency: farmData.settings?.rebalanceFrequency || 'hourly',
-              emergencyStop: farmData.settings?.emergencyStop || true
-            }
+            total_allocated: 0,
+            current_value: 0,
+            total_pnl: 0,
+            performance_target: farmData.performanceTarget || 10,
+            risk_tolerance: farmData.riskTolerance || 'medium',
+            configuration: farmData.configuration || {},
+            performance_metrics: {}
           };
 
-          const { farms } = get();
-          set({ farms: [...farms, newFarm], loading: false });
+          const createdFarm = await db.createFarm(newFarmData);
+
+          const farm: Farm = {
+            id: createdFarm.id,
+            name: createdFarm.name,
+            description: createdFarm.description || '',
+            type: createdFarm.farm_type as any,
+            strategy: createdFarm.strategy,
+            status: createdFarm.status as any,
+            totalAllocated: createdFarm.total_allocated,
+            currentValue: createdFarm.current_value,
+            totalPnL: createdFarm.total_pnl,
+            performanceTarget: createdFarm.performance_target || 0,
+            riskTolerance: createdFarm.risk_tolerance as any,
+            configuration: createdFarm.configuration,
+            performanceMetrics: createdFarm.performance_metrics,
+            assignedAgents: [],
+            createdAt: createdFarm.created_at,
+            updatedAt: createdFarm.updated_at
+          };
+
+          set(state => ({
+            farms: [...state.farms, farm],
+            loading: false
+          }));
+
+          return farm;
+
         } catch (error) {
-          set({ error: 'Failed to create farm', loading: false });
           console.error('Create farm error:', error);
+          set({ error: 'Failed to create farm', loading: false });
+          throw error;
         }
       },
 
-      updateFarm: async (id, updates) => {
-        set({ loading: true, error: null });
+      updateFarm: async (id: string, updates: Partial<Farm>) => {
         try {
-          const { farms } = get();
-          const updatedFarms = farms.map(farm => 
-            farm.id === id ? { ...farm, ...updates } : farm
-          );
-          set({ farms: updatedFarms, loading: false });
+          set({ loading: true, error: null });
+
+          // Convert store format to database format
+          const dbUpdates: any = {};
+          if (updates.name) dbUpdates.name = updates.name;
+          if (updates.description) dbUpdates.description = updates.description;
+          if (updates.strategy) dbUpdates.strategy = updates.strategy;
+          if (updates.status) dbUpdates.status = updates.status;
+          if (updates.totalAllocated !== undefined) dbUpdates.total_allocated = updates.totalAllocated;
+          if (updates.currentValue !== undefined) dbUpdates.current_value = updates.currentValue;
+          if (updates.totalPnL !== undefined) dbUpdates.total_pnl = updates.totalPnL;
+          if (updates.performanceTarget !== undefined) dbUpdates.performance_target = updates.performanceTarget;
+          if (updates.riskTolerance) dbUpdates.risk_tolerance = updates.riskTolerance;
+          if (updates.configuration) dbUpdates.configuration = updates.configuration;
+          if (updates.performanceMetrics) dbUpdates.performance_metrics = updates.performanceMetrics;
+
+          await db.updateFarm(id, dbUpdates);
+
+          set(state => ({
+            farms: state.farms.map(farm =>
+              farm.id === id ? { ...farm, ...updates } : farm
+            ),
+            selectedFarm: state.selectedFarm?.id === id 
+              ? { ...state.selectedFarm, ...updates } 
+              : state.selectedFarm,
+            loading: false
+          }));
+
         } catch (error) {
-          set({ error: 'Failed to update farm', loading: false });
           console.error('Update farm error:', error);
+          set({ error: 'Failed to update farm', loading: false });
         }
       },
 
-      deleteFarm: async (id) => {
-        set({ loading: true, error: null });
+      deleteFarm: async (id: string) => {
         try {
-          const { farms } = get();
-          const updatedFarms = farms.filter(farm => farm.id !== id);
-          set({ farms: updatedFarms, loading: false });
+          set({ loading: true, error: null });
+
+          // Delete farm from database (this will cascade delete farm_agents)
+          await db.supabase
+            .from('farms')
+            .delete()
+            .eq('id', id);
+
+          set(state => ({
+            farms: state.farms.filter(farm => farm.id !== id),
+            selectedFarm: state.selectedFarm?.id === id ? null : state.selectedFarm,
+            loading: false
+          }));
+
         } catch (error) {
-          set({ error: 'Failed to delete farm', loading: false });
           console.error('Delete farm error:', error);
+          set({ error: 'Failed to delete farm', loading: false });
         }
       },
 
-      startFarm: async (id) => {
+      assignAgentToFarm: async (farmId: string, agentId: string, allocation: number, role: string) => {
         try {
-          await get().updateFarm(id, { status: 'active', lastActive: new Date().toISOString() });
-        } catch (error) {
-          console.error('Start farm error:', error);
-        }
-      },
+          set({ loading: true, error: null });
 
-      stopFarm: async (id) => {
-        try {
-          await get().updateFarm(id, { status: 'inactive' });
-        } catch (error) {
-          console.error('Stop farm error:', error);
-        }
-      },
+          // Check if agent is already assigned to this farm
+          const existingAssignment = await db.supabase
+            .from('farm_agents')
+            .select('id')
+            .eq('farm_id', farmId)
+            .eq('agent_id', agentId)
+            .single();
 
-      pauseFarm: async (id) => {
-        try {
-          await get().updateFarm(id, { status: 'paused' });
-        } catch (error) {
-          console.error('Pause farm error:', error);
-        }
-      },
-
-      addAgentToFarm: async (farmId, agentId) => {
-        try {
-          const { farms } = get();
-          const farm = farms.find(f => f.id === farmId);
-          if (farm && !farm.agents.includes(agentId)) {
-            await get().updateFarm(farmId, { 
-              agents: [...farm.agents, agentId] 
-            });
+          if (!existingAssignment.error) {
+            // Update existing assignment
+            await db.supabase
+              .from('farm_agents')
+              .update({
+                allocation_percentage: allocation,
+                role: role
+              })
+              .eq('farm_id', farmId)
+              .eq('agent_id', agentId);
+          } else {
+            // Create new assignment
+            await db.supabase
+              .from('farm_agents')
+              .insert({
+                farm_id: farmId,
+                agent_id: agentId,
+                allocation_percentage: allocation,
+                role: role
+              });
           }
+
+          // Reload farms to get updated assignments
+          await get().loadFarms();
+
         } catch (error) {
-          console.error('Add agent to farm error:', error);
+          console.error('Assign agent to farm error:', error);
+          set({ error: 'Failed to assign agent to farm', loading: false });
         }
       },
 
-      removeAgentFromFarm: async (farmId, agentId) => {
+      removeAgentFromFarm: async (farmId: string, agentId: string) => {
         try {
-          const { farms } = get();
-          const farm = farms.find(f => f.id === farmId);
-          if (farm) {
-            await get().updateFarm(farmId, { 
-              agents: farm.agents.filter(id => id !== agentId) 
-            });
-          }
+          set({ loading: true, error: null });
+
+          await db.supabase
+            .from('farm_agents')
+            .delete()
+            .eq('farm_id', farmId)
+            .eq('agent_id', agentId);
+
+          // Update local state
+          set(state => ({
+            farms: state.farms.map(farm =>
+              farm.id === farmId
+                ? {
+                    ...farm,
+                    assignedAgents: farm.assignedAgents.filter(
+                      agent => agent.agentId !== agentId
+                    )
+                  }
+                : farm
+            ),
+            selectedFarm: state.selectedFarm?.id === farmId
+              ? {
+                  ...state.selectedFarm,
+                  assignedAgents: state.selectedFarm.assignedAgents.filter(
+                    agent => agent.agentId !== agentId
+                  )
+                }
+              : state.selectedFarm,
+            loading: false
+          }));
+
         } catch (error) {
           console.error('Remove agent from farm error:', error);
+          set({ error: 'Failed to remove agent from farm', loading: false });
         }
       },
 
-      setSelectedFarm: (farm) => {
+      optimizeFarm: async (id: string) => {
+        try {
+          set({ loading: true, error: null });
+
+          // Get farm data
+          const farm = get().farms.find(f => f.id === id);
+          if (!farm) throw new Error('Farm not found');
+
+          // Mock optimization logic - in real implementation this would use AI/ML
+          const optimizedAllocations = farm.assignedAgents.map(agent => {
+            // Adjust allocation based on agent performance
+            const performanceMultiplier = agent.agentPnL && agent.agentPnL > 0 ? 1.1 : 0.9;
+            const newAllocation = Math.min(50, Math.max(10, agent.allocationPercentage * performanceMultiplier));
+            
+            return {
+              ...agent,
+              allocationPercentage: newAllocation
+            };
+          });
+
+          // Update allocations in database
+          for (const agent of optimizedAllocations) {
+            await db.supabase
+              .from('farm_agents')
+              .update({ allocation_percentage: agent.allocationPercentage })
+              .eq('farm_id', id)
+              .eq('agent_id', agent.agentId);
+          }
+
+          // Update farm status
+          await db.updateFarm(id, { 
+            status: 'active',
+            performance_metrics: {
+              ...farm.performanceMetrics,
+              lastOptimization: new Date().toISOString(),
+              optimizationCount: (farm.performanceMetrics.optimizationCount || 0) + 1
+            }
+          });
+
+          // Reload farms
+          await get().loadFarms();
+
+        } catch (error) {
+          console.error('Optimize farm error:', error);
+          set({ error: 'Failed to optimize farm', loading: false });
+        }
+      },
+
+      selectFarm: (farm: Farm | null) => {
         set({ selectedFarm: farm });
       },
 
-      refreshFarmData: async (id) => {
+      getFarmPerformance: async (farmId: string) => {
         try {
-          // In a real implementation, this would fetch updated data from the API
-          const { farms } = get();
-          const farm = farms.find(f => f.id === id);
-          if (farm) {
-            // Simulate updated performance data
-            const updatedFarm = {
-              ...farm,
-              lastActive: new Date().toISOString(),
-              // Add some random variation to simulate live data
-              pnl24h: farm.pnl24h + (Math.random() - 0.5) * 100,
-              pnlPercent: farm.pnlPercent + (Math.random() - 0.5) * 0.5
-            };
-            await get().updateFarm(id, updatedFarm);
-          }
+          // Get farm performance metrics
+          const { data, error } = await db.supabase
+            .from('farms')
+            .select(`
+              *,
+              farm_agents (
+                *,
+                agents (
+                  current_balance,
+                  total_pnl,
+                  win_rate,
+                  total_trades
+                )
+              )
+            `)
+            .eq('id', farmId)
+            .single();
+
+          if (error) throw error;
+
+          // Calculate aggregate performance metrics
+          const totalValue = data.farm_agents.reduce((sum: number, fa: any) => 
+            sum + (fa.agents?.current_balance || 0), 0);
+          
+          const totalPnL = data.farm_agents.reduce((sum: number, fa: any) => 
+            sum + (fa.agents?.total_pnl || 0), 0);
+          
+          const avgWinRate = data.farm_agents.length > 0 
+            ? data.farm_agents.reduce((sum: number, fa: any) => 
+                sum + (fa.agents?.win_rate || 0), 0) / data.farm_agents.length
+            : 0;
+
+          const totalTrades = data.farm_agents.reduce((sum: number, fa: any) => 
+            sum + (fa.agents?.total_trades || 0), 0);
+
+          return {
+            totalValue,
+            totalPnL,
+            pnlPercentage: totalValue > 0 ? (totalPnL / totalValue) * 100 : 0,
+            avgWinRate,
+            totalTrades,
+            agentCount: data.farm_agents.length,
+            lastUpdated: new Date().toISOString()
+          };
+
         } catch (error) {
-          console.error('Refresh farm data error:', error);
+          console.error('Get farm performance error:', error);
+          return null;
+        }
+      },
+
+      // Helper method to create sample farm for demo
+      createSampleFarm: async () => {
+        const { userId } = get();
+        if (!userId) return;
+
+        try {
+          const sampleFarm = {
+            user_id: userId,
+            name: 'DeFi Yield Farm',
+            description: 'Conservative yield farming across multiple protocols',
+            farm_type: 'yield',
+            strategy: 'diversified_yield',
+            status: 'active',
+            total_allocated: 50000,
+            current_value: 52150,
+            total_pnl: 2150,
+            performance_target: 12,
+            risk_tolerance: 'medium',
+            configuration: {
+              protocols: ['aave', 'compound', 'yearn'],
+              riskLevel: 'low',
+              autoCompound: true
+            },
+            performance_metrics: {
+              monthlyReturn: 12.3,
+              sharpeRatio: 1.8,
+              maxDrawdown: -3.2
+            }
+          };
+
+          await db.supabase
+            .from('farms')
+            .insert(sampleFarm);
+
+        } catch (error) {
+          console.error('Error creating sample farm:', error);
         }
       }
     }),
     {
       name: 'farm-store',
-      partialize: (state) => ({ 
+      partialize: (state) => ({
         farms: state.farms,
-        selectedFarm: state.selectedFarm 
+        selectedFarm: state.selectedFarm,
+        userId: state.userId
       })
     }
   )

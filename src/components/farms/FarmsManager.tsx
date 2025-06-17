@@ -9,25 +9,7 @@ import FarmCard from './FarmCard';
 import CreateFarmDialog from './CreateFarmDialog';
 import FarmDetailsPanel from './FarmDetailsPanel';
 
-interface Farm {
-  id: string;
-  name: string;
-  description: string;
-  agents: string[];
-  strategy: string;
-  status: 'active' | 'inactive' | 'paused';
-  totalValue: number;
-  pnl24h: number;
-  pnlPercent: number;
-  performance: {
-    totalTrades: number;
-    winRate: number;
-    avgReturn: number;
-    maxDrawdown: number;
-  };
-  created: string;
-  lastActive: string;
-}
+import { Farm } from '@/lib/store/farmStore';
 
 const FarmsManager: React.FC = () => {
   const [selectedFarm, setSelectedFarm] = useState<Farm | null>(null);
@@ -35,13 +17,24 @@ const FarmsManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive' | 'paused'>('all');
   
-  const { farms, loading, fetchFarms, createFarm } = useFarmStore();
-  const { agents, fetchAgents } = useAgentStore();
+  const { farms, loading, initialize: initializeFarms, createFarm } = useFarmStore();
+  const { agents, initialize: initializeAgents } = useAgentStore();
 
   useEffect(() => {
-    fetchFarms();
-    fetchAgents();
-  }, [fetchFarms, fetchAgents]);
+    const initializeStores = async () => {
+      try {
+        await Promise.all([
+          initializeFarms(),
+          initializeAgents()
+        ]);
+      } catch (error) {
+        console.error('Failed to initialize farm stores:', error);
+        toast.error('Failed to load farm data');
+      }
+    };
+    
+    initializeStores();
+  }, [initializeFarms, initializeAgents]);
 
   const filteredFarms = farms.filter(farm => {
     const matchesSearch = farm.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -61,10 +54,10 @@ const FarmsManager: React.FC = () => {
     }
   };
 
-  const totalValue = farms.reduce((sum, farm) => sum + farm.totalValue, 0);
+  const totalValue = farms.reduce((sum, farm) => sum + farm.currentValue, 0);
   const activeFarms = farms.filter(farm => farm.status === 'active').length;
-  const totalAgents = farms.reduce((sum, farm) => sum + farm.agents.length, 0);
-  const avgPnl = farms.length > 0 ? farms.reduce((sum, farm) => sum + farm.pnlPercent, 0) / farms.length : 0;
+  const totalAgents = farms.reduce((sum, farm) => sum + farm.assignedAgents.length, 0);
+  const avgPnl = farms.length > 0 ? farms.reduce((sum, farm) => sum + (farm.currentValue > 0 ? (farm.totalPnL / farm.currentValue) * 100 : 0), 0) / farms.length : 0;
 
   if (loading) {
     return (
@@ -174,7 +167,10 @@ const FarmsManager: React.FC = () => {
         </div>
 
         <button
-          onClick={fetchFarms}
+          onClick={() => {
+            initializeFarms();
+            initializeAgents();
+          }}
           className="flex items-center space-x-2 text-gray-600 hover:text-gray-800 transition-colors"
         >
           <RefreshCw className="w-4 h-4" />

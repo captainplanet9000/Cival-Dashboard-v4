@@ -461,7 +461,7 @@ const WalletManager: React.FC = () => {
                         ))
                       : farms.map((farm) => (
                           <SelectItem key={farm.id} value={farm.id}>
-                            {farm.name} - {formatPrice(farm.totalValue)}
+                            {farm.name} - {formatPrice(farm.currentValue)}
                           </SelectItem>
                         ))
                     }

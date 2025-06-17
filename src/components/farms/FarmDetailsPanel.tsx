@@ -2,26 +2,7 @@
 
 import React from 'react';
 import { X, Play, Pause, Square, Settings } from 'lucide-react';
-
-interface Farm {
-  id: string;
-  name: string;
-  description: string;
-  agents: string[];
-  strategy: string;
-  status: 'active' | 'inactive' | 'paused';
-  totalValue: number;
-  pnl24h: number;
-  pnlPercent: number;
-  performance: {
-    totalTrades: number;
-    winRate: number;
-    avgReturn: number;
-    maxDrawdown: number;
-  };
-  created: string;
-  lastActive: string;
-}
+import { Farm } from '@/lib/store/farmStore';
 
 interface FarmDetailsPanelProps {
   farm: Farm;
@@ -51,20 +32,20 @@ const FarmDetailsPanel: React.FC<FarmDetailsPanelProps> = ({ farm, isOpen, onClo
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-gray-500">Total Value</p>
-                  <p className="text-lg font-semibold">${farm.totalValue.toLocaleString()}</p>
+                  <p className="text-sm text-gray-500">Current Value</p>
+                  <p className="text-lg font-semibold">${farm.currentValue.toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">24h P&L</p>
-                  <p className={`text-lg font-semibold ${farm.pnl24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {farm.pnl24h >= 0 ? '+' : ''}${farm.pnl24h.toLocaleString()}
+                  <p className="text-sm text-gray-500">Total P&L</p>
+                  <p className={`text-lg font-semibold ${farm.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {farm.totalPnL >= 0 ? '+' : ''}${farm.totalPnL.toLocaleString()}
                   </p>
                 </div>
               </div>
 
               <div>
-                <p className="text-sm text-gray-500">Agents</p>
-                <p className="text-base">{farm.agents.length} agents assigned</p>
+                <p className="text-sm text-gray-500">Assigned Agents</p>
+                <p className="text-base">{farm.assignedAgents.length} agents assigned</p>
               </div>
 
               <div>
@@ -75,8 +56,8 @@ const FarmDetailsPanel: React.FC<FarmDetailsPanelProps> = ({ farm, isOpen, onClo
               <div>
                 <p className="text-sm text-gray-500">Performance</p>
                 <div className="grid grid-cols-2 gap-2 text-sm">
-                  <span>Win Rate: {farm.performance.winRate.toFixed(1)}%</span>
-                  <span>Total Trades: {farm.performance.totalTrades}</span>
+                  <span>Win Rate: {farm.performanceMetrics.winRate?.toFixed(1) || '0.0'}%</span>
+                  <span>Total Trades: {farm.performanceMetrics.totalTrades || 0}</span>
                 </div>
               </div>
             </div>

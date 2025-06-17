@@ -46,8 +46,8 @@ export default function OverviewPage() {
   
   const { 
     agents, 
-    fetchAgents, 
-    refreshAgentData,
+    initialize: initializeAgents, 
+    refreshAgentPerformance,
     loading: agentLoading 
   } = useAgentStore();
 
@@ -71,18 +71,18 @@ export default function OverviewPage() {
   
   const { 
     farms, 
-    fetchFarms,
+    initialize: initializeFarms,
     loading: farmLoading 
   } = useFarmStore();
 
   useEffect(() => {
     // Initial data fetch
-    fetchAgents();
-    fetchFarms();
+    initializeAgents();
+    initializeFarms();
     if (isConnected) {
       refreshPrices();
     }
-  }, [fetchAgents, fetchFarms, isConnected, refreshPrices]);
+  }, [initializeAgents, initializeFarms, isConnected, refreshPrices]);
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
@@ -91,21 +91,21 @@ export default function OverviewPage() {
         if (isConnected) {
           refreshPrices();
         }
-        agents.forEach(agent => refreshAgentData(agent.id));
+        agents.forEach(agent => refreshAgentPerformance(agent.id));
       }, 30000);
       
       return () => clearInterval(interval);
     }
-  }, [autoRefresh, isConnected, refreshPrices, agents, refreshAgentData]);
+  }, [autoRefresh, isConnected, refreshPrices, agents, refreshAgentPerformance]);
 
   // Calculate metrics
   const totalAgentValue = agents.reduce((sum, agent) => sum + agent.balance, 0);
-  const totalFarmValue = farms.reduce((sum, farm) => sum + farm.totalValue, 0);
+  const totalFarmValue = farms.reduce((sum, farm) => sum + farm.currentValue, 0);
   const activeAgents = agents.filter(agent => agent.status === 'active').length;
   const activeFarms = farms.filter(farm => farm.status === 'active').length;
   const totalPnl24h = agents.reduce((sum, agent) => sum + agent.pnl24h, 0) + 
-                     farms.reduce((sum, farm) => sum + farm.pnl24h, 0);
-  const totalTrades24h = agents.reduce((sum, agent) => sum + agent.trades24h, 0);
+                     farms.reduce((sum, farm) => sum + farm.totalPnL, 0);
+  const totalTrades24h = agents.reduce((sum, agent) => sum + agent.totalTrades, 0);
   const avgWinRate = agents.length > 0 ? agents.reduce((sum, agent) => sum + agent.winRate, 0) / agents.length : 0;
 
   const portfolioTotal = totalBalance + totalAgentValue + totalFarmValue;
@@ -119,9 +119,9 @@ export default function OverviewPage() {
         await refreshPrices();
       }
       await Promise.all([
-        fetchAgents(),
-        fetchFarms(),
-        ...agents.map(agent => refreshAgentData(agent.id))
+        initializeAgents(),
+        initializeFarms(),
+        ...agents.map(agent => refreshAgentPerformance(agent.id))
       ]);
       toast.success('Data refreshed successfully');
     } catch (error) {
@@ -471,8 +471,8 @@ export default function OverviewPage() {
           ) : (
             <div className="space-y-3">
               {agents
-                .filter(agent => agent.trades24h > 0)
-                .sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime())
+                .filter(agent => agent.totalTrades > 0)
+                .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime())
                 .slice(0, 10)
                 .map((agent) => (
                   <div key={agent.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
@@ -481,7 +481,7 @@ export default function OverviewPage() {
                       <div>
                         <p className="font-medium">{agent.name}</p>
                         <p className="text-sm text-gray-600">
-                          {agent.trades24h} trades • Win rate: {agent.winRate.toFixed(1)}%
+                          {agent.totalTrades} trades • Win rate: {agent.winRate.toFixed(1)}%
                         </p>
                       </div>
                     </div>
@@ -490,7 +490,7 @@ export default function OverviewPage() {
                         {agent.pnl24h >= 0 ? '+' : ''}{formatPrice(agent.pnl24h)}
                       </p>
                       <p className="text-sm text-gray-600">
-                        {new Date(agent.lastActive).toLocaleTimeString()}
+                        {new Date(agent.lastActivity).toLocaleTimeString()}
                       </p>
                     </div>
                   </div>

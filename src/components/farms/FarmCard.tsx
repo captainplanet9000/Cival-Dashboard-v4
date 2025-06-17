@@ -9,20 +9,27 @@ interface Farm {
   id: string;
   name: string;
   description: string;
-  agents: string[];
+  assignedAgents: Array<{
+    id: string;
+    agentId: string;
+    agentName: string;
+    allocationPercentage: number;
+    role: string;
+    assignedAt: string;
+    agentStatus?: string;
+  }>;
   strategy: string;
-  status: 'active' | 'inactive' | 'paused';
-  totalValue: number;
-  pnl24h: number;
-  pnlPercent: number;
-  performance: {
-    totalTrades: number;
-    winRate: number;
-    avgReturn: number;
-    maxDrawdown: number;
+  status: 'active' | 'inactive' | 'paused' | 'optimizing';
+  currentValue: number;
+  totalPnL: number;
+  performanceMetrics: {
+    totalTrades?: number;
+    winRate?: number;
+    avgReturn?: number;
+    maxDrawdown?: number;
   };
-  created: string;
-  lastActive: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface FarmCardProps {
@@ -31,7 +38,7 @@ interface FarmCardProps {
 }
 
 const FarmCard: React.FC<FarmCardProps> = ({ farm, onClick }) => {
-  const { startFarm, stopFarm, pauseFarm } = useFarmStore();
+  const { updateFarm } = useFarmStore();
   const { agents } = useAgentStore();
 
   const getStatusColor = (status: string) => {
@@ -65,19 +72,21 @@ const FarmCard: React.FC<FarmCardProps> = ({ farm, onClick }) => {
     
     switch (farm.status) {
       case 'active':
-        await pauseFarm(farm.id);
+        await updateFarm(farm.id, { status: 'paused' });
         break;
       case 'paused':
-        await startFarm(farm.id);
+        await updateFarm(farm.id, { status: 'active' });
         break;
       case 'inactive':
-        await startFarm(farm.id);
+        await updateFarm(farm.id, { status: 'active' });
         break;
     }
   };
 
-  const farmAgents = agents.filter(agent => farm.agents.includes(agent.id));
-  const activeAgents = farmAgents.filter(agent => agent.status === 'active').length;
+  const farmAgents = agents.filter(agent => 
+    farm.assignedAgents.some(fa => fa.agentId === agent.id)
+  );
+  const activeAgents = farm.assignedAgents.filter(fa => fa.agentStatus === 'active').length;
 
   return (
     <div
@@ -121,27 +130,27 @@ const FarmCard: React.FC<FarmCardProps> = ({ farm, onClick }) => {
         
         <div className="flex items-center space-x-1 text-sm text-gray-600">
           <Users className="w-4 h-4" />
-          <span>{activeAgents}/{farm.agents.length}</span>
+          <span>{activeAgents}/{farm.assignedAgents.length}</span>
         </div>
       </div>
 
       {/* Performance Metrics */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-600">Total Value</span>
+          <span className="text-sm text-gray-600">Current Value</span>
           <span className="text-lg font-semibold text-gray-900">
-            ${farm.totalValue.toLocaleString()}
+            ${farm.currentValue.toLocaleString()}
           </span>
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-600">24h P&L</span>
+          <span className="text-sm text-gray-600">Total P&L</span>
           <div className="text-right">
-            <div className={`text-sm font-medium ${farm.pnl24h >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {farm.pnl24h >= 0 ? '+' : ''}${farm.pnl24h.toLocaleString()}
+            <div className={`text-sm font-medium ${farm.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {farm.totalPnL >= 0 ? '+' : ''}${farm.totalPnL.toLocaleString()}
             </div>
-            <div className={`text-xs ${farm.pnlPercent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {farm.pnlPercent >= 0 ? '+' : ''}{farm.pnlPercent.toFixed(2)}%
+            <div className={`text-xs ${farm.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {farm.currentValue > 0 ? `${((farm.totalPnL / farm.currentValue) * 100).toFixed(2)}%` : '0.00%'}
             </div>
           </div>
         </div>
@@ -149,14 +158,14 @@ const FarmCard: React.FC<FarmCardProps> = ({ farm, onClick }) => {
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-600">Win Rate</span>
           <span className="text-sm font-medium text-gray-900">
-            {farm.performance.winRate.toFixed(1)}%
+            {farm.performanceMetrics.winRate?.toFixed(1) || '0.0'}%
           </span>
         </div>
 
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-600">Total Trades</span>
           <span className="text-sm font-medium text-gray-900">
-            {farm.performance.totalTrades.toLocaleString()}
+            {farm.performanceMetrics.totalTrades?.toLocaleString() || '0'}
           </span>
         </div>
       </div>
@@ -164,9 +173,9 @@ const FarmCard: React.FC<FarmCardProps> = ({ farm, onClick }) => {
       {/* Footer */}
       <div className="mt-4 pt-4 border-t border-gray-100">
         <div className="flex items-center justify-between text-xs text-gray-500">
-          <span>Created {new Date(farm.created).toLocaleDateString()}</span>
+          <span>Created {new Date(farm.createdAt).toLocaleDateString()}</span>
           <span>
-            Last active {new Date(farm.lastActive).toLocaleTimeString()}
+            Updated {new Date(farm.updatedAt).toLocaleTimeString()}
           </span>
         </div>
       </div>

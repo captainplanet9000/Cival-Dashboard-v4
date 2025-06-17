@@ -283,19 +283,29 @@ export default function VaultPage() {
     transferToAgent,
     transferToFarm,
     loadBalance,
-    refreshPrices
+    refreshPrices,
+    initialize: initializeWallet
   } = useWalletStore();
 
-  const { agents, fetchAgents } = useAgentStore();
-  const { farms, fetchFarms } = useFarmStore();
+  const { agents, initialize: initializeAgents } = useAgentStore();
+  const { farms, initialize: initializeFarms } = useFarmStore();
 
   useEffect(() => {
-    fetchAgents();
-    fetchFarms();
-    if (isConnected) {
-      loadBalance();
-    }
-  }, [isConnected, fetchAgents, fetchFarms, loadBalance]);
+    const initializeStores = async () => {
+      try {
+        await Promise.all([
+          initializeWallet(),
+          initializeAgents(),
+          initializeFarms()
+        ]);
+      } catch (error) {
+        console.error('Failed to initialize vault stores:', error);
+        toast.error('Failed to load vault data');
+      }
+    };
+    
+    initializeStores();
+  }, [initializeWallet, initializeAgents, initializeFarms]);
 
   const handleQuickDeposit = async (amount: number) => {
     try {
@@ -355,7 +365,7 @@ export default function VaultPage() {
 
   // Calculate derived metrics from our stores
   const totalAgentBalance = agents.reduce((sum, agent) => sum + agent.balance, 0);
-  const totalFarmValue = farms.reduce((sum, farm) => sum + farm.totalValue, 0);
+  const totalFarmValue = farms.reduce((sum, farm) => sum + farm.currentValue, 0);
   const activeAgents = agents.filter(agent => agent.status === 'active').length;
   const activeFarms = farms.filter(farm => farm.status === 'active').length;
 
@@ -644,7 +654,7 @@ export default function VaultPage() {
                 <SelectContent>
                   {farms.map((farm) => (
                     <SelectItem key={farm.id} value={farm.id}>
-                      {farm.name} - ${farm.totalValue.toLocaleString()}
+                      {farm.name} - ${farm.currentValue.toLocaleString()}
                     </SelectItem>
                   ))}
                 </SelectContent>

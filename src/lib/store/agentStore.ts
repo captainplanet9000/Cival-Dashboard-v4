@@ -1,55 +1,65 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { backendApi } from '@/lib/api/backend-client';
+import { db, getDemoUser } from '@/lib/supabase/client';
 
-interface Agent {
+export interface Agent {
   id: string;
   name: string;
-  type: 'trading' | 'arbitrage' | 'market-maker' | 'yield-farmer' | 'scout';
-  status: 'active' | 'inactive' | 'error' | 'paused';
-  balance: number;
-  pnl24h: number;
-  pnlPercent: number;
-  trades24h: number;
-  winRate: number;
-  lastActive: string;
+  type: 'trading' | 'arbitrage' | 'market_maker' | 'yield_farmer' | 'scout' | 'risk_manager';
   strategy: string;
-  settings: {
-    maxRisk: number;
-    targetReturn: number;
-    stopLoss: number;
-    takeProfit: number;
-  };
-  performance: {
-    totalTrades: number;
-    totalVolume: number;
-    avgReturn: number;
-    maxDrawdown: number;
-    sharpeRatio: number;
-  };
-  farmId?: string;
-  walletAddress?: string;
-  created: string;
+  status: 'active' | 'inactive' | 'paused' | 'error' | 'stopped';
+  balance: number;
+  allocatedBalance: number;
+  pnl24h: number;
+  totalPnL: number;
+  pnlPercent: number;
+  winRate: number;
+  totalTrades: number;
+  successfulTrades: number;
+  lastActivity: string;
+  configuration: any;
+  riskParameters: any;
+  performanceMetrics: any;
+  createdAt: string;
+}
+
+export interface AgentTrade {
+  id: string;
+  agentId: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  quantity: number;
+  entryPrice: number;
+  exitPrice?: number;
+  pnl?: number;
+  pnlPercentage?: number;
+  status: 'open' | 'closed';
+  openedAt: string;
+  closedAt?: string;
+  reason?: string;
 }
 
 interface AgentStore {
   agents: Agent[];
   selectedAgent: Agent | null;
+  agentTrades: Record<string, AgentTrade[]>;
   loading: boolean;
   error: string | null;
-  
+  userId: string | null;
+
   // Actions
-  fetchAgents: () => Promise<void>;
-  createAgent: (agentData: Partial<Agent>) => Promise<void>;
+  initialize: () => Promise<void>;
+  loadAgents: () => Promise<void>;
+  createAgent: (agentData: Partial<Agent>) => Promise<Agent>;
   updateAgent: (id: string, updates: Partial<Agent>) => Promise<void>;
   deleteAgent: (id: string) => Promise<void>;
   startAgent: (id: string) => Promise<void>;
   stopAgent: (id: string) => Promise<void>;
-  pauseAgent: (id: string) => Promise<void>;
-  setSelectedAgent: (agent: Agent | null) => void;
-  refreshAgentData: (id: string) => Promise<void>;
   fundAgent: (id: string, amount: number) => Promise<void>;
-  withdrawFromAgent: (id: string, amount: number) => Promise<void>;
+  getAgentTrades: (agentId: string) => Promise<AgentTrade[]>;
+  selectAgent: (agent: Agent | null) => void;
+  refreshAgentPerformance: (agentId: string) => Promise<void>;
+  createSampleAgents: () => Promise<void>;
 }
 
 export const useAgentStore = create<AgentStore>()(
@@ -57,335 +67,437 @@ export const useAgentStore = create<AgentStore>()(
     (set, get) => ({
       agents: [],
       selectedAgent: null,
+      agentTrades: {},
       loading: false,
       error: null,
+      userId: null,
 
-      fetchAgents: async () => {
-        set({ loading: true, error: null });
+      initialize: async () => {
         try {
-          // Mock data for now - replace with real API call
-          const mockAgents: Agent[] = [
-            {
-              id: 'agent-1',
-              name: 'Alpha Momentum',
-              type: 'trading',
-              status: 'active',
-              balance: 8500,
-              pnl24h: 425,
-              pnlPercent: 5.3,
-              trades24h: 47,
-              winRate: 72.4,
-              lastActive: new Date().toISOString(),
-              strategy: 'momentum',
-              settings: {
-                maxRisk: 5,
-                targetReturn: 15,
-                stopLoss: -2,
-                takeProfit: 3
-              },
-              performance: {
-                totalTrades: 1247,
-                totalVolume: 125000,
-                avgReturn: 0.32,
-                maxDrawdown: -8.4,
-                sharpeRatio: 1.8
-              },
-              walletAddress: '0x742d35cc4bf78d7362c6b07a67dc15c3c1b47a99',
-              created: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-            },
-            {
-              id: 'agent-2',
-              name: 'Beta Scalper',
-              type: 'trading',
-              status: 'active',
-              balance: 6200,
-              pnl24h: 186,
-              pnlPercent: 3.1,
-              trades24h: 89,
-              winRate: 65.8,
-              lastActive: new Date().toISOString(),
-              strategy: 'scalping',
-              settings: {
-                maxRisk: 3,
-                targetReturn: 12,
-                stopLoss: -1,
-                takeProfit: 1.5
-              },
-              performance: {
-                totalTrades: 2341,
-                totalVolume: 89000,
-                avgReturn: 0.18,
-                maxDrawdown: -5.2,
-                sharpeRatio: 2.1
-              },
-              walletAddress: '0x8ba1f109551bd432803012645hf6b51e7b826db',
-              created: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString()
-            },
-            {
-              id: 'agent-3',
-              name: 'Gamma Grid',
-              type: 'market-maker',
-              status: 'active',
-              balance: 10300,
-              pnl24h: 515,
-              pnlPercent: 5.2,
-              trades24h: 156,
-              winRate: 78.2,
-              lastActive: new Date().toISOString(),
-              strategy: 'grid',
-              settings: {
-                maxRisk: 4,
-                targetReturn: 18,
-                stopLoss: -2.5,
-                takeProfit: 2
-              },
-              performance: {
-                totalTrades: 3456,
-                totalVolume: 234000,
-                avgReturn: 0.28,
-                maxDrawdown: -6.8,
-                sharpeRatio: 2.3
-              },
-              walletAddress: '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984',
-              created: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString()
-            },
-            {
-              id: 'agent-4',
-              name: 'Delta Arbitrage',
-              type: 'arbitrage',
-              status: 'active',
-              balance: 7800,
-              pnl24h: 312,
-              pnlPercent: 4.2,
-              trades24h: 23,
-              winRate: 86.4,
-              lastActive: new Date().toISOString(),
-              strategy: 'arbitrage',
-              settings: {
-                maxRisk: 2,
-                targetReturn: 10,
-                stopLoss: -1.5,
-                takeProfit: 2.5
-              },
-              performance: {
-                totalTrades: 567,
-                totalVolume: 156000,
-                avgReturn: 0.45,
-                maxDrawdown: -3.2,
-                sharpeRatio: 3.1
-              },
-              walletAddress: '0xa0b86a33e6cb3b6b4b50a2c29c8e24c10d3f7d85',
-              created: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
-            },
-            {
-              id: 'agent-5',
-              name: 'Epsilon Cross-Chain',
-              type: 'arbitrage',
-              status: 'active',
-              balance: 9100,
-              pnl24h: 364,
-              pnlPercent: 4.1,
-              trades24h: 18,
-              winRate: 83.7,
-              lastActive: new Date().toISOString(),
-              strategy: 'cross-chain',
-              settings: {
-                maxRisk: 3,
-                targetReturn: 14,
-                stopLoss: -2,
-                takeProfit: 3
-              },
-              performance: {
-                totalTrades: 423,
-                totalVolume: 198000,
-                avgReturn: 0.52,
-                maxDrawdown: -4.1,
-                sharpeRatio: 2.8
-              },
-              walletAddress: '0x6b175474e89094c44da98b954eedeac495271d0f',
-              created: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString()
-            },
-            {
-              id: 'agent-6',
-              name: 'Zeta Yield',
-              type: 'yield-farmer',
-              status: 'paused',
-              balance: 12000,
-              pnl24h: -120,
-              pnlPercent: -1.0,
-              trades24h: 8,
-              winRate: 62.5,
-              lastActive: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-              strategy: 'yield-farming',
-              settings: {
-                maxRisk: 8,
-                targetReturn: 25,
-                stopLoss: -5,
-                takeProfit: 5
-              },
-              performance: {
-                totalTrades: 234,
-                totalVolume: 67000,
-                avgReturn: 0.15,
-                maxDrawdown: -12.1,
-                sharpeRatio: 1.2
-              },
-              walletAddress: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-              created: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-            }
-          ];
+          set({ loading: true });
           
-          set({ agents: mockAgents, loading: false });
+          // Get demo user
+          const user = await getDemoUser();
+          if (!user) {
+            throw new Error('Failed to initialize user');
+          }
+
+          set({ userId: user.id });
+          await get().loadAgents();
+          
         } catch (error) {
-          set({ error: 'Failed to fetch agents', loading: false });
-          console.error('Fetch agents error:', error);
+          console.error('Agent store initialization error:', error);
+          set({ error: 'Failed to initialize agents', loading: false });
         }
       },
 
-      createAgent: async (agentData) => {
-        set({ loading: true, error: null });
+      loadAgents: async () => {
         try {
-          const newAgent: Agent = {
-            id: `agent-${Date.now()}`,
+          set({ loading: true, error: null });
+          const { userId } = get();
+          
+          if (!userId) {
+            throw new Error('User not initialized');
+          }
+
+          // Load agents from database
+          const agentsData = await db.getAgents(userId);
+          
+          // Convert database format to store format
+          const agents: Agent[] = agentsData.map(agent => ({
+            id: agent.id,
+            name: agent.name,
+            type: agent.agent_type as any,
+            strategy: agent.strategy,
+            status: agent.status as any,
+            balance: agent.current_balance || 0,
+            allocatedBalance: agent.allocated_balance || 0,
+            pnl24h: agent.daily_pnl || 0,
+            totalPnL: agent.total_pnl || 0,
+            pnlPercent: agent.current_balance > 0 ? ((agent.total_pnl || 0) / agent.current_balance) * 100 : 0,
+            winRate: agent.win_rate || 0,
+            totalTrades: agent.total_trades || 0,
+            successfulTrades: agent.successful_trades || 0,
+            lastActivity: agent.last_activity || agent.updated_at,
+            configuration: agent.configuration || {},
+            riskParameters: agent.risk_parameters || {},
+            performanceMetrics: agent.performance_metrics || {},
+            createdAt: agent.created_at
+          }));
+
+          // If no agents exist, create sample agents for demo
+          if (agents.length === 0) {
+            await get().createSampleAgents();
+            // Reload after creating sample agents
+            return get().loadAgents();
+          }
+
+          set({ agents, loading: false });
+
+        } catch (error) {
+          console.error('Load agents error:', error);
+          set({ error: 'Failed to load agents', loading: false });
+        }
+      },
+
+      createAgent: async (agentData: Partial<Agent>) => {
+        try {
+          set({ loading: true, error: null });
+          const { userId } = get();
+          
+          if (!userId) {
+            throw new Error('User not initialized');
+          }
+
+          const newAgentData = {
+            user_id: userId,
             name: agentData.name || 'New Agent',
-            type: agentData.type || 'trading',
+            agent_type: agentData.type || 'trading',
+            strategy: agentData.strategy || 'balanced',
             status: 'inactive',
-            balance: 0,
-            pnl24h: 0,
-            pnlPercent: 0,
-            trades24h: 0,
-            winRate: 0,
-            lastActive: new Date().toISOString(),
-            strategy: agentData.strategy || 'custom',
-            settings: {
-              maxRisk: agentData.settings?.maxRisk || 5,
-              targetReturn: agentData.settings?.targetReturn || 15,
-              stopLoss: agentData.settings?.stopLoss || -2,
-              takeProfit: agentData.settings?.takeProfit || 3
-            },
-            performance: {
-              totalTrades: 0,
-              totalVolume: 0,
-              avgReturn: 0,
-              maxDrawdown: 0,
-              sharpeRatio: 0
-            },
-            created: new Date().toISOString()
+            allocated_balance: 0,
+            current_balance: 0,
+            total_pnl: 0,
+            daily_pnl: 0,
+            win_rate: 0,
+            total_trades: 0,
+            successful_trades: 0,
+            configuration: agentData.configuration || {},
+            risk_parameters: agentData.riskParameters || {},
+            performance_metrics: {}
           };
 
-          const { agents } = get();
-          set({ agents: [...agents, newAgent], loading: false });
+          const createdAgent = await db.createAgent(newAgentData);
+
+          const agent: Agent = {
+            id: createdAgent.id,
+            name: createdAgent.name,
+            type: createdAgent.agent_type as any,
+            strategy: createdAgent.strategy,
+            status: createdAgent.status as any,
+            balance: createdAgent.current_balance,
+            allocatedBalance: createdAgent.allocated_balance,
+            pnl24h: createdAgent.daily_pnl,
+            totalPnL: createdAgent.total_pnl,
+            pnlPercent: 0,
+            winRate: createdAgent.win_rate,
+            totalTrades: createdAgent.total_trades,
+            successfulTrades: createdAgent.successful_trades,
+            lastActivity: createdAgent.created_at,
+            configuration: createdAgent.configuration,
+            riskParameters: createdAgent.risk_parameters,
+            performanceMetrics: createdAgent.performance_metrics,
+            createdAt: createdAgent.created_at
+          };
+
+          set(state => ({
+            agents: [...state.agents, agent],
+            loading: false
+          }));
+
+          return agent;
+
         } catch (error) {
-          set({ error: 'Failed to create agent', loading: false });
           console.error('Create agent error:', error);
+          set({ error: 'Failed to create agent', loading: false });
+          throw error;
         }
       },
 
-      updateAgent: async (id, updates) => {
-        set({ loading: true, error: null });
+      updateAgent: async (id: string, updates: Partial<Agent>) => {
         try {
-          const { agents } = get();
-          const updatedAgents = agents.map(agent => 
-            agent.id === id ? { ...agent, ...updates } : agent
-          );
-          set({ agents: updatedAgents, loading: false });
+          set({ loading: true, error: null });
+
+          // Convert store format to database format
+          const dbUpdates: any = {};
+          if (updates.name) dbUpdates.name = updates.name;
+          if (updates.strategy) dbUpdates.strategy = updates.strategy;
+          if (updates.status) dbUpdates.status = updates.status;
+          if (updates.balance !== undefined) dbUpdates.current_balance = updates.balance;
+          if (updates.allocatedBalance !== undefined) dbUpdates.allocated_balance = updates.allocatedBalance;
+          if (updates.configuration) dbUpdates.configuration = updates.configuration;
+          if (updates.riskParameters) dbUpdates.risk_parameters = updates.riskParameters;
+
+          await db.updateAgent(id, dbUpdates);
+
+          set(state => ({
+            agents: state.agents.map(agent =>
+              agent.id === id ? { ...agent, ...updates } : agent
+            ),
+            selectedAgent: state.selectedAgent?.id === id 
+              ? { ...state.selectedAgent, ...updates } 
+              : state.selectedAgent,
+            loading: false
+          }));
+
         } catch (error) {
-          set({ error: 'Failed to update agent', loading: false });
           console.error('Update agent error:', error);
+          set({ error: 'Failed to update agent', loading: false });
         }
       },
 
-      deleteAgent: async (id) => {
-        set({ loading: true, error: null });
+      deleteAgent: async (id: string) => {
         try {
-          const { agents } = get();
-          const updatedAgents = agents.filter(agent => agent.id !== id);
-          set({ agents: updatedAgents, loading: false });
+          set({ loading: true, error: null });
+
+          await db.deleteAgent(id);
+
+          set(state => ({
+            agents: state.agents.filter(agent => agent.id !== id),
+            selectedAgent: state.selectedAgent?.id === id ? null : state.selectedAgent,
+            loading: false
+          }));
+
         } catch (error) {
-          set({ error: 'Failed to delete agent', loading: false });
           console.error('Delete agent error:', error);
+          set({ error: 'Failed to delete agent', loading: false });
         }
       },
 
-      startAgent: async (id) => {
+      startAgent: async (id: string) => {
         try {
-          await get().updateAgent(id, { status: 'active', lastActive: new Date().toISOString() });
+          await db.updateAgent(id, { status: 'active', last_activity: new Date().toISOString() });
+          
+          set(state => ({
+            agents: state.agents.map(agent =>
+              agent.id === id 
+                ? { ...agent, status: 'active', lastActivity: new Date().toISOString() }
+                : agent
+            ),
+            selectedAgent: state.selectedAgent?.id === id
+              ? { ...state.selectedAgent, status: 'active', lastActivity: new Date().toISOString() }
+              : state.selectedAgent
+          }));
+
         } catch (error) {
           console.error('Start agent error:', error);
+          set({ error: 'Failed to start agent' });
         }
       },
 
-      stopAgent: async (id) => {
+      stopAgent: async (id: string) => {
         try {
-          await get().updateAgent(id, { status: 'inactive' });
+          await db.updateAgent(id, { status: 'stopped' });
+          
+          set(state => ({
+            agents: state.agents.map(agent =>
+              agent.id === id ? { ...agent, status: 'stopped' } : agent
+            ),
+            selectedAgent: state.selectedAgent?.id === id
+              ? { ...state.selectedAgent, status: 'stopped' }
+              : state.selectedAgent
+          }));
+
         } catch (error) {
           console.error('Stop agent error:', error);
+          set({ error: 'Failed to stop agent' });
         }
       },
 
-      pauseAgent: async (id) => {
+      fundAgent: async (id: string, amount: number) => {
         try {
-          await get().updateAgent(id, { status: 'paused' });
+          const agent = get().agents.find(a => a.id === id);
+          if (!agent) throw new Error('Agent not found');
+
+          const newBalance = agent.balance + amount;
+          const newAllocatedBalance = agent.allocatedBalance + amount;
+
+          await db.updateAgent(id, { 
+            current_balance: newBalance,
+            allocated_balance: newAllocatedBalance
+          });
+
+          set(state => ({
+            agents: state.agents.map(a =>
+              a.id === id 
+                ? { ...a, balance: newBalance, allocatedBalance: newAllocatedBalance }
+                : a
+            ),
+            selectedAgent: state.selectedAgent?.id === id
+              ? { ...state.selectedAgent, balance: newBalance, allocatedBalance: newAllocatedBalance }
+              : state.selectedAgent
+          }));
+
         } catch (error) {
-          console.error('Pause agent error:', error);
+          console.error('Fund agent error:', error);
+          set({ error: 'Failed to fund agent' });
         }
       },
 
-      setSelectedAgent: (agent) => {
+      getAgentTrades: async (agentId: string) => {
+        try {
+          const { data, error } = await db.supabase
+            .from('agent_trades')
+            .select('*')
+            .eq('agent_id', agentId)
+            .order('opened_at', { ascending: false })
+            .limit(50);
+
+          if (error) throw error;
+
+          const trades: AgentTrade[] = (data || []).map(trade => ({
+            id: trade.id,
+            agentId: trade.agent_id,
+            symbol: trade.symbol,
+            side: trade.side as any,
+            quantity: trade.quantity,
+            entryPrice: trade.entry_price || 0,
+            exitPrice: trade.exit_price || undefined,
+            pnl: trade.pnl || undefined,
+            pnlPercentage: trade.pnl_percentage || undefined,
+            status: trade.closed_at ? 'closed' : 'open',
+            openedAt: trade.opened_at,
+            closedAt: trade.closed_at || undefined,
+            reason: trade.reason || undefined
+          }));
+
+          set(state => ({
+            agentTrades: {
+              ...state.agentTrades,
+              [agentId]: trades
+            }
+          }));
+
+          return trades;
+
+        } catch (error) {
+          console.error('Get agent trades error:', error);
+          return [];
+        }
+      },
+
+      selectAgent: (agent: Agent | null) => {
         set({ selectedAgent: agent });
       },
 
-      refreshAgentData: async (id) => {
+      refreshAgentPerformance: async (agentId: string) => {
         try {
-          // In a real implementation, this would fetch updated data from the API
-          const { agents } = get();
-          const agent = agents.find(a => a.id === id);
-          if (agent) {
-            // Simulate updated performance data
-            const updatedAgent = {
-              ...agent,
-              lastActive: new Date().toISOString(),
-              // Add some random variation to simulate live data
-              pnl24h: agent.pnl24h + (Math.random() - 0.5) * 50,
-              pnlPercent: agent.pnlPercent + (Math.random() - 0.5) * 0.3,
-              trades24h: agent.trades24h + Math.floor(Math.random() * 5)
+          // Get recent performance data
+          const performanceData = await db.getAgentPerformance(agentId, 30);
+          
+          // Update agent performance metrics
+          const agent = get().agents.find(a => a.id === agentId);
+          if (agent && performanceData.length > 0) {
+            const latestPerformance = performanceData[performanceData.length - 1];
+            
+            const updates = {
+              balance: latestPerformance.balance,
+              totalPnL: latestPerformance.pnl,
+              winRate: latestPerformance.win_rate || 0,
+              performanceMetrics: {
+                ...agent.performanceMetrics,
+                sharpeRatio: latestPerformance.sharpe_ratio,
+                maxDrawdown: latestPerformance.max_drawdown,
+                volatility: latestPerformance.volatility,
+                recentPerformance: performanceData
+              }
             };
-            await get().updateAgent(id, updatedAgent);
+
+            await get().updateAgent(agentId, updates);
           }
+
         } catch (error) {
-          console.error('Refresh agent data error:', error);
+          console.error('Refresh agent performance error:', error);
         }
       },
 
-      fundAgent: async (id, amount) => {
-        try {
-          const { agents } = get();
-          const agent = agents.find(a => a.id === id);
-          if (agent) {
-            await get().updateAgent(id, { balance: agent.balance + amount });
-          }
-        } catch (error) {
-          console.error('Fund agent error:', error);
-        }
-      },
+      // Helper method to create sample agents for demo
+      createSampleAgents: async () => {
+        const { userId } = get();
+        if (!userId) return;
 
-      withdrawFromAgent: async (id, amount) => {
-        try {
-          const { agents } = get();
-          const agent = agents.find(a => a.id === id);
-          if (agent && agent.balance >= amount) {
-            await get().updateAgent(id, { balance: agent.balance - amount });
+        const sampleAgents = [
+          {
+            name: 'Marcus - Momentum',
+            agent_type: 'trading',
+            strategy: 'momentum',
+            status: 'active',
+            allocated_balance: 25000,
+            current_balance: 26247,
+            total_pnl: 1247,
+            daily_pnl: 425,
+            win_rate: 68.5,
+            total_trades: 47,
+            successful_trades: 32,
+            configuration: {
+              symbols: ['BTC/USD', 'ETH/USD'],
+              timeframe: '1h',
+              lookback: 24
+            },
+            risk_parameters: {
+              maxRisk: 5,
+              stopLoss: -2,
+              takeProfit: 3
+            }
+          },
+          {
+            name: 'Alex - Arbitrage',
+            agent_type: 'arbitrage',
+            strategy: 'cross_exchange',
+            status: 'active',
+            allocated_balance: 15000,
+            current_balance: 15750,
+            total_pnl: 750,
+            daily_pnl: 125,
+            win_rate: 85.2,
+            total_trades: 23,
+            successful_trades: 20,
+            configuration: {
+              exchanges: ['binance', 'coinbase'],
+              minSpread: 0.5
+            },
+            risk_parameters: {
+              maxRisk: 3,
+              stopLoss: -1.5,
+              takeProfit: 2
+            }
+          },
+          {
+            name: 'Sophia - Mean Reversion',
+            agent_type: 'trading',
+            strategy: 'mean_reversion',
+            status: 'paused',
+            allocated_balance: 20000,
+            current_balance: 19650,
+            total_pnl: -350,
+            daily_pnl: -125,
+            win_rate: 62.1,
+            total_trades: 29,
+            successful_trades: 18,
+            configuration: {
+              symbols: ['ETH/USD'],
+              rsiPeriod: 14,
+              oversold: 30,
+              overbought: 70
+            },
+            risk_parameters: {
+              maxRisk: 4,
+              stopLoss: -2.5,
+              takeProfit: 3.5
+            }
           }
-        } catch (error) {
-          console.error('Withdraw from agent error:', error);
+        ];
+
+        for (const agentData of sampleAgents) {
+          try {
+            await db.supabase
+              .from('agents')
+              .insert({
+                user_id: userId,
+                ...agentData
+              });
+          } catch (error) {
+            console.error('Error creating sample agent:', error);
+          }
         }
       }
     }),
     {
       name: 'agent-store',
-      partialize: (state) => ({ 
+      partialize: (state) => ({
         agents: state.agents,
-        selectedAgent: state.selectedAgent 
+        selectedAgent: state.selectedAgent,
+        userId: state.userId
       })
     }
   )

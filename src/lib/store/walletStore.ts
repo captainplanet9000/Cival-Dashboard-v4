@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { backendApi } from '@/lib/api/backend-client';
-import agUIProtocol from '@/lib/ag-ui-protocol-v2';
+import { db, getDemoUser } from '@/lib/supabase/client';
 
 interface WalletBalance {
   token: string;
@@ -34,8 +33,10 @@ interface WalletStore {
   address?: string;
   loading: boolean;
   error: string | null;
+  userId: string | null;
 
   // Actions
+  initialize: () => Promise<void>;
   connectWallet: () => Promise<void>;
   disconnectWallet: () => void;
   loadBalance: () => Promise<void>;
@@ -45,10 +46,6 @@ interface WalletStore {
   transferToFarm: (farmId: string, amount: number, token: string) => Promise<void>;
   getTransactionHistory: () => Promise<void>;
   refreshPrices: () => Promise<void>;
-  
-  // AG-UI Integration
-  initializeAGUI: () => void;
-  broadcastWalletUpdate: () => void;
 }
 
 export const useWalletStore = create<WalletStore>()(
@@ -61,51 +58,194 @@ export const useWalletStore = create<WalletStore>()(
       address: undefined,
       loading: false,
       error: null,
+      userId: null,
+
+      initialize: async () => {
+        try {
+          set({ loading: true });
+          
+          // Get or create demo user
+          const user = await getDemoUser();
+          if (!user) {
+            throw new Error('Failed to initialize user');
+          }
+
+          set({ userId: user.id });
+
+          // Load user's wallets and balances from database
+          const wallets = await db.getWallets(user.id);
+          const positions = await db.getPositions(user.id);
+          const transactions = await db.getTransactions(user.id, 50);
+
+          if (wallets.length > 0) {
+            const primaryWallet = wallets.find(w => w.is_primary) || wallets[0];
+            
+            // Convert positions to wallet balances
+            const balances: WalletBalance[] = [];
+            const balanceMap = new Map<string, number>();
+            
+            // Parse balance cache from wallet
+            if (primaryWallet.balance_cache) {
+              Object.entries(primaryWallet.balance_cache as Record<string, number>).forEach(([symbol, amount]) => {
+                balanceMap.set(symbol, amount);
+              });
+            }
+
+            // Add positions
+            positions.forEach(pos => {
+              const symbol = pos.symbol.split('/')[0]; // Extract base symbol from pair
+              const existing = balanceMap.get(symbol) || 0;
+              balanceMap.set(symbol, existing + pos.quantity);
+            });
+
+            // Get current market prices
+            const marketData = await db.getMarketData();
+            const priceMap = new Map<string, number>();
+            marketData.forEach(data => {
+              const symbol = data.symbol.split('/')[0];
+              priceMap.set(symbol, data.price);
+            });
+
+            // Convert to balance format
+            balanceMap.forEach((amount, symbol) => {
+              if (amount > 0) {
+                const price = priceMap.get(symbol) || (symbol === 'USDC' ? 1 : 0);
+                balances.push({
+                  token: symbol,
+                  symbol,
+                  amount,
+                  price,
+                  value: amount * price
+                });
+              }
+            });
+
+            const totalBalance = balances.reduce((sum, balance) => sum + balance.value, 0);
+
+            // Convert database transactions to store format
+            const formattedTransactions: Transaction[] = transactions.map(tx => ({
+              id: tx.id,
+              type: tx.transaction_type as any,
+              amount: tx.quantity,
+              token: tx.symbol.split('/')[0],
+              hash: tx.transaction_hash || undefined,
+              status: tx.status === 'confirmed' ? 'confirmed' : tx.status === 'failed' ? 'failed' : 'pending',
+              timestamp: tx.created_at,
+              agentId: tx.agent_id || undefined,
+              farmId: tx.farm_id || undefined
+            }));
+
+            set({
+              isConnected: true,
+              address: primaryWallet.address,
+              balances,
+              totalBalance,
+              transactions: formattedTransactions,
+              loading: false
+            });
+          } else {
+            // Create initial wallet for demo user
+            await get().connectWallet();
+          }
+
+        } catch (error) {
+          console.error('Wallet initialization error:', error);
+          set({ error: 'Failed to initialize wallet', loading: false });
+        }
+      },
 
       connectWallet: async () => {
         set({ loading: true, error: null });
         try {
-          // Simulate wallet connection - replace with actual wallet integration
+          const { userId, isConnected } = get();
+          
+          // If already connected, just return
+          if (isConnected) {
+            set({ loading: false });
+            return;
+          }
+
+          let currentUserId = userId;
+
+          // Get or create demo user if no userId
+          if (!currentUserId) {
+            const user = await getDemoUser();
+            if (!user) throw new Error('Failed to get user');
+            currentUserId = user.id;
+            set({ userId: currentUserId });
+          }
+
+          if (!currentUserId) {
+            throw new Error('Failed to establish user ID');
+          }
+
           const mockAddress = '0x742d35cc4bf78d7362c6b07a67dc15c3c1b47a99';
           
-          // Initialize with some mock balances
-          const mockBalances: WalletBalance[] = [
-            {
-              token: 'USDC',
-              symbol: 'USDC',
-              amount: 50.0, // Start with $50 as requested
-              value: 50.0,
-              price: 1.0
-            },
-            {
-              token: 'ETH',
-              symbol: 'ETH',
-              amount: 0.02,
-              value: 64.8,
-              price: 3240.0
-            },
-            {
-              token: 'BTC',
-              symbol: 'BTC',
-              amount: 0.001,
-              value: 97.5,
-              price: 97500.0
-            }
-          ];
+          // Check if wallet exists, if not create one
+          const existingWallets = await db.getWallets(currentUserId);
+          let walletData;
 
-          const totalBalance = mockBalances.reduce((sum, balance) => sum + balance.value, 0);
+          if (existingWallets.length === 0) {
+            // Create new wallet in database
+            walletData = await db.supabase
+              .from('wallets')
+              .insert({
+                user_id: currentUserId,
+                name: 'Main Wallet',
+                address: mockAddress,
+                wallet_type: 'internal',
+                is_primary: true,
+                balance_cache: {
+                  USDC: 50.0, // Start with $50 as requested
+                  ETH: 0.02,
+                  BTC: 0.001
+                }
+              })
+              .select()
+              .single();
+
+            if (walletData.error) throw walletData.error;
+          } else {
+            walletData = { data: existingWallets[0] };
+          }
+
+          // Initialize balances from wallet cache
+          const balanceCache = walletData.data.balance_cache as Record<string, number>;
+          const balances: WalletBalance[] = [];
+
+          // Get current market prices
+          const marketData = await db.getMarketData(['BTC/USD', 'ETH/USD', 'USDC/USD']);
+          const priceMap = new Map<string, number>();
+          marketData.forEach(data => {
+            const symbol = data.symbol.split('/')[0];
+            priceMap.set(symbol, data.price);
+          });
+
+          // Set default prices if not found
+          priceMap.set('USDC', 1.0);
+          if (!priceMap.has('ETH')) priceMap.set('ETH', 3240.0);
+          if (!priceMap.has('BTC')) priceMap.set('BTC', 97500.0);
+
+          Object.entries(balanceCache).forEach(([symbol, amount]) => {
+            const price = priceMap.get(symbol) || 1;
+            balances.push({
+              token: symbol,
+              symbol,
+              amount,
+              price,
+              value: amount * price
+            });
+          });
+
+          const totalBalance = balances.reduce((sum, balance) => sum + balance.value, 0);
 
           set({
             isConnected: true,
             address: mockAddress,
-            balances: mockBalances,
+            balances,
             totalBalance,
             loading: false
           });
-
-          // Initialize AG-UI Protocol
-          get().initializeAGUI();
-          get().broadcastWalletUpdate();
 
         } catch (error) {
           set({ error: 'Failed to connect wallet', loading: false });
@@ -124,13 +264,44 @@ export const useWalletStore = create<WalletStore>()(
       },
 
       loadBalance: async () => {
-        if (!get().isConnected) return;
+        if (!get().isConnected || !get().userId) return;
         
         set({ loading: true, error: null });
         try {
-          // In a real implementation, this would fetch from blockchain/API
-          await get().refreshPrices();
-          get().broadcastWalletUpdate();
+          // Refresh balances from database
+          const { userId } = get();
+          const wallets = await db.getWallets(userId!);
+          const positions = await db.getPositions(userId!);
+
+          if (wallets.length > 0) {
+            const primaryWallet = wallets.find(w => w.is_primary) || wallets[0];
+            
+            // Update balance cache and recalculate
+            const balanceCache = primaryWallet.balance_cache as Record<string, number>;
+            const balances: WalletBalance[] = [];
+
+            // Get current market prices
+            const marketData = await db.getMarketData();
+            const priceMap = new Map<string, number>();
+            marketData.forEach(data => {
+              const symbol = data.symbol.split('/')[0];
+              priceMap.set(symbol, data.price);
+            });
+
+            Object.entries(balanceCache).forEach(([symbol, amount]) => {
+              const price = priceMap.get(symbol) || 1;
+              balances.push({
+                token: symbol,
+                symbol,
+                amount,
+                price,
+                value: amount * price
+              });
+            });
+
+            const totalBalance = balances.reduce((sum, balance) => sum + balance.value, 0);
+            set({ balances, totalBalance, loading: false });
+          }
         } catch (error) {
           set({ error: 'Failed to load balance', loading: false });
           console.error('Load balance error:', error);
@@ -140,11 +311,15 @@ export const useWalletStore = create<WalletStore>()(
       deposit: async (amount: number, token: string) => {
         set({ loading: true, error: null });
         try {
-          const { balances } = get();
+          const { balances, userId, address } = get();
+          
+          if (!userId) throw new Error('User not connected');
+
           const existingBalance = balances.find(b => b.token === token);
           
+          let updatedBalances;
           if (existingBalance) {
-            const updatedBalances = balances.map(balance =>
+            updatedBalances = balances.map(balance =>
               balance.token === token
                 ? { 
                     ...balance, 
@@ -153,12 +328,12 @@ export const useWalletStore = create<WalletStore>()(
                   }
                 : balance
             );
-            
-            const totalBalance = updatedBalances.reduce((sum, balance) => sum + balance.value, 0);
-            set({ balances: updatedBalances, totalBalance });
           } else {
-            // Add new token balance
-            const price = token === 'USDC' ? 1.0 : token === 'ETH' ? 3240.0 : 97500.0;
+            // Get current price for new token
+            const marketData = await db.getMarketData([`${token}/USD`]);
+            const price = marketData.length > 0 ? marketData[0].price : 
+                         (token === 'USDC' ? 1.0 : token === 'ETH' ? 3240.0 : 97500.0);
+            
             const newBalance: WalletBalance = {
               token,
               symbol: token,
@@ -166,29 +341,45 @@ export const useWalletStore = create<WalletStore>()(
               value: amount * price,
               price
             };
-            
-            const updatedBalances = [...balances, newBalance];
-            const totalBalance = updatedBalances.reduce((sum, balance) => sum + balance.value, 0);
-            set({ balances: updatedBalances, totalBalance });
+            updatedBalances = [...balances, newBalance];
           }
 
-          // Record transaction
-          const transaction: Transaction = {
-            id: `tx-${Date.now()}`,
-            type: 'deposit',
-            amount,
-            token,
-            status: 'confirmed',
-            timestamp: new Date().toISOString(),
-            to: get().address
-          };
+          const totalBalance = updatedBalances.reduce((sum, balance) => sum + balance.value, 0);
 
-          set(state => ({
-            transactions: [transaction, ...state.transactions],
-            loading: false
-          }));
+          // Update wallet balance cache in database
+          const wallets = await db.getWallets(userId);
+          if (wallets.length > 0) {
+            const primaryWallet = wallets.find(w => w.is_primary) || wallets[0];
+            const newBalanceCache = { ...primaryWallet.balance_cache as Record<string, number> };
+            newBalanceCache[token] = (newBalanceCache[token] || 0) + amount;
 
-          get().broadcastWalletUpdate();
+            await db.supabase
+              .from('wallets')
+              .update({ balance_cache: newBalanceCache })
+              .eq('id', primaryWallet.id);
+
+            // Record transaction in database
+            await db.supabase
+              .from('transactions')
+              .insert({
+                user_id: userId,
+                wallet_id: primaryWallet.id,
+                transaction_type: 'deposit',
+                symbol: token,
+                quantity: amount,
+                total_amount: amount * (updatedBalances.find(b => b.token === token)?.price || 1),
+                status: 'confirmed'
+              });
+          }
+
+          set({ 
+            balances: updatedBalances, 
+            totalBalance,
+            loading: false 
+          });
+
+          // Refresh transaction history
+          await get().getTransactionHistory();
 
         } catch (error) {
           set({ error: 'Failed to deposit funds', loading: false });
@@ -199,7 +390,7 @@ export const useWalletStore = create<WalletStore>()(
       withdraw: async (amount: number, token: string, address: string) => {
         set({ loading: true, error: null });
         try {
-          const { balances } = get();
+          const { balances, userId } = get();
           const balance = balances.find(b => b.token === token);
           
           if (!balance || balance.amount < amount) {
@@ -217,26 +408,37 @@ export const useWalletStore = create<WalletStore>()(
           );
 
           const totalBalance = updatedBalances.reduce((sum, balance) => sum + balance.value, 0);
-          set({ balances: updatedBalances, totalBalance });
+          
+          // Update database
+          if (userId) {
+            const wallets = await db.getWallets(userId);
+            if (wallets.length > 0) {
+              const primaryWallet = wallets.find(w => w.is_primary) || wallets[0];
+              const newBalanceCache = { ...primaryWallet.balance_cache as Record<string, number> };
+              newBalanceCache[token] = Math.max(0, newBalanceCache[token] - amount);
 
-          // Record transaction
-          const transaction: Transaction = {
-            id: `tx-${Date.now()}`,
-            type: 'withdrawal',
-            amount,
-            token,
-            status: 'pending',
-            timestamp: new Date().toISOString(),
-            from: get().address,
-            to: address
-          };
+              await db.supabase
+                .from('wallets')
+                .update({ balance_cache: newBalanceCache })
+                .eq('id', primaryWallet.id);
 
-          set(state => ({
-            transactions: [transaction, ...state.transactions],
-            loading: false
-          }));
+              // Record transaction
+              await db.supabase
+                .from('transactions')
+                .insert({
+                  user_id: userId,
+                  wallet_id: primaryWallet.id,
+                  transaction_type: 'withdrawal',
+                  symbol: token,
+                  quantity: amount,
+                  total_amount: amount * balance.price,
+                  status: 'pending'
+                });
+            }
+          }
 
-          get().broadcastWalletUpdate();
+          set({ balances: updatedBalances, totalBalance, loading: false });
+          await get().getTransactionHistory();
 
         } catch (error) {
           set({ error: 'Failed to withdraw funds', loading: false });
@@ -246,7 +448,7 @@ export const useWalletStore = create<WalletStore>()(
 
       transferToAgent: async (agentId: string, amount: number, token: string) => {
         try {
-          const { balances } = get();
+          const { balances, userId } = get();
           const balance = balances.find(b => b.token === token);
           
           if (!balance || balance.amount < amount) {
@@ -265,37 +467,57 @@ export const useWalletStore = create<WalletStore>()(
           );
 
           const totalBalance = updatedBalances.reduce((sum, balance) => sum + balance.value, 0);
-          set({ balances: updatedBalances, totalBalance });
+          
+          // Update database
+          if (userId) {
+            const wallets = await db.getWallets(userId);
+            if (wallets.length > 0) {
+              const primaryWallet = wallets.find(w => w.is_primary) || wallets[0];
+              
+              // Update wallet balance cache
+              const newBalanceCache = { ...primaryWallet.balance_cache as Record<string, number> };
+              newBalanceCache[token] = Math.max(0, newBalanceCache[token] - amount);
 
-          // Record transaction
-          const transaction: Transaction = {
-            id: `tx-${Date.now()}`,
-            type: 'transfer',
-            amount,
-            token,
-            status: 'confirmed',
-            timestamp: new Date().toISOString(),
-            from: get().address,
-            agentId
-          };
+              await db.supabase
+                .from('wallets')
+                .update({ balance_cache: newBalanceCache })
+                .eq('id', primaryWallet.id);
 
-          set(state => ({
-            transactions: [transaction, ...state.transactions]
-          }));
+              // Update agent balance
+              const agent = await db.supabase
+                .from('agents')
+                .select('current_balance')
+                .eq('id', agentId)
+                .single();
 
-          // Update agent balance through AG-UI
-          try {
-            await agUIProtocol.emit('agent_funding', {
-              agentId,
-              amount,
-              token,
-              transactionId: transaction.id
-            });
-          } catch (error) {
-            console.error('AG-UI agent funding event error:', error);
+              if (agent.data) {
+                await db.supabase
+                  .from('agents')
+                  .update({ 
+                    current_balance: (agent.data.current_balance || 0) + (amount * balance.price),
+                    allocated_balance: (agent.data.current_balance || 0) + (amount * balance.price)
+                  })
+                  .eq('id', agentId);
+              }
+
+              // Record transaction
+              await db.supabase
+                .from('transactions')
+                .insert({
+                  user_id: userId,
+                  wallet_id: primaryWallet.id,
+                  transaction_type: 'transfer',
+                  symbol: token,
+                  quantity: amount,
+                  total_amount: amount * balance.price,
+                  status: 'confirmed',
+                  agent_id: agentId
+                });
+            }
           }
 
-          get().broadcastWalletUpdate();
+          set({ balances: updatedBalances, totalBalance });
+          await get().getTransactionHistory();
 
         } catch (error) {
           console.error('Transfer to agent error:', error);
@@ -305,14 +527,14 @@ export const useWalletStore = create<WalletStore>()(
 
       transferToFarm: async (farmId: string, amount: number, token: string) => {
         try {
-          const { balances } = get();
+          const { balances, userId } = get();
           const balance = balances.find(b => b.token === token);
           
           if (!balance || balance.amount < amount) {
             throw new Error('Insufficient balance');
           }
 
-          // Update wallet balance
+          // Similar to transferToAgent but for farms
           const updatedBalances = balances.map(b =>
             b.token === token
               ? { 
@@ -324,37 +546,56 @@ export const useWalletStore = create<WalletStore>()(
           );
 
           const totalBalance = updatedBalances.reduce((sum, balance) => sum + balance.value, 0);
-          set({ balances: updatedBalances, totalBalance });
+          
+          if (userId) {
+            const wallets = await db.getWallets(userId);
+            if (wallets.length > 0) {
+              const primaryWallet = wallets.find(w => w.is_primary) || wallets[0];
+              
+              // Update wallet and farm balances in database
+              const newBalanceCache = { ...primaryWallet.balance_cache as Record<string, number> };
+              newBalanceCache[token] = Math.max(0, newBalanceCache[token] - amount);
 
-          // Record transaction
-          const transaction: Transaction = {
-            id: `tx-${Date.now()}`,
-            type: 'transfer',
-            amount,
-            token,
-            status: 'confirmed',
-            timestamp: new Date().toISOString(),
-            from: get().address,
-            farmId
-          };
+              await db.supabase
+                .from('wallets')
+                .update({ balance_cache: newBalanceCache })
+                .eq('id', primaryWallet.id);
 
-          set(state => ({
-            transactions: [transaction, ...state.transactions]
-          }));
+              // Update farm balance
+              const farm = await db.supabase
+                .from('farms')
+                .select('total_allocated, current_value')
+                .eq('id', farmId)
+                .single();
 
-          // Update farm balance through AG-UI
-          try {
-            await agUIProtocol.emit('farm_funding', {
-              farmId,
-              amount,
-              token,
-              transactionId: transaction.id
-            });
-          } catch (error) {
-            console.error('AG-UI farm funding event error:', error);
+              if (farm.data) {
+                await db.supabase
+                  .from('farms')
+                  .update({ 
+                    total_allocated: (farm.data.total_allocated || 0) + (amount * balance.price),
+                    current_value: (farm.data.current_value || 0) + (amount * balance.price)
+                  })
+                  .eq('id', farmId);
+              }
+
+              // Record transaction
+              await db.supabase
+                .from('transactions')
+                .insert({
+                  user_id: userId,
+                  wallet_id: primaryWallet.id,
+                  transaction_type: 'transfer',
+                  symbol: token,
+                  quantity: amount,
+                  total_amount: amount * balance.price,
+                  status: 'confirmed',
+                  farm_id: farmId
+                });
+            }
           }
 
-          get().broadcastWalletUpdate();
+          set({ balances: updatedBalances, totalBalance });
+          await get().getTransactionHistory();
 
         } catch (error) {
           console.error('Transfer to farm error:', error);
@@ -363,55 +604,56 @@ export const useWalletStore = create<WalletStore>()(
       },
 
       getTransactionHistory: async () => {
-        // Mock implementation - in real app, fetch from API/blockchain
-        set({ loading: false });
+        try {
+          const { userId } = get();
+          if (!userId) return;
+
+          const transactions = await db.getTransactions(userId, 50);
+          
+          const formattedTransactions: Transaction[] = transactions.map(tx => ({
+            id: tx.id,
+            type: tx.transaction_type as any,
+            amount: tx.quantity,
+            token: tx.symbol.split('/')[0],
+            hash: tx.transaction_hash || undefined,
+            status: tx.status === 'confirmed' ? 'confirmed' : tx.status === 'failed' ? 'failed' : 'pending',
+            timestamp: tx.created_at,
+            agentId: tx.agent_id || undefined,
+            farmId: tx.farm_id || undefined
+          }));
+
+          set({ transactions: formattedTransactions });
+        } catch (error) {
+          console.error('Get transaction history error:', error);
+        }
       },
 
       refreshPrices: async () => {
         try {
           const { balances } = get();
-          // Mock price updates - in real app, fetch from price API
-          const priceUpdates = {
-            USDC: 1.0,
-            ETH: 3240.0 + (Math.random() - 0.5) * 100, // Simulate price movement
-            BTC: 97500.0 + (Math.random() - 0.5) * 1000
-          };
+          
+          // Get current market prices from database
+          const marketData = await db.getMarketData();
+          const priceMap = new Map<string, number>();
+          marketData.forEach(data => {
+            const symbol = data.symbol.split('/')[0];
+            priceMap.set(symbol, data.price);
+          });
 
-          const updatedBalances = balances.map(balance => ({
-            ...balance,
-            price: priceUpdates[balance.token as keyof typeof priceUpdates] || balance.price,
-            value: balance.amount * (priceUpdates[balance.token as keyof typeof priceUpdates] || balance.price)
-          }));
+          const updatedBalances = balances.map(balance => {
+            const newPrice = priceMap.get(balance.token) || balance.price;
+            return {
+              ...balance,
+              price: newPrice,
+              value: balance.amount * newPrice
+            };
+          });
 
           const totalBalance = updatedBalances.reduce((sum, balance) => sum + balance.value, 0);
           set({ balances: updatedBalances, totalBalance, loading: false });
 
         } catch (error) {
           console.error('Refresh prices error:', error);
-        }
-      },
-
-      initializeAGUI: () => {
-        try {
-          agUIProtocol.initializeAGUI();
-        } catch (error) {
-          console.error('AG-UI initialization error:', error);
-        }
-      },
-
-      broadcastWalletUpdate: () => {
-        try {
-          const { totalBalance, balances, isConnected, address } = get();
-          
-          agUIProtocol.emit('wallet_update', {
-            totalBalance,
-            balances,
-            isConnected,
-            address,
-            timestamp: new Date().toISOString()
-          });
-        } catch (error) {
-          console.error('Wallet broadcast error:', error);
         }
       }
     }),
@@ -422,7 +664,8 @@ export const useWalletStore = create<WalletStore>()(
         balances: state.balances,
         transactions: state.transactions,
         isConnected: state.isConnected,
-        address: state.address
+        address: state.address,
+        userId: state.userId
       })
     }
   )

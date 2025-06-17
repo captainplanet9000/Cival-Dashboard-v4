@@ -202,32 +202,45 @@ export default function AgentsPage() {
   const { 
     agents, 
     loading, 
-    fetchAgents, 
+    initialize: initializeAgents,
     createAgent, 
-    startAgent, 
-    pauseAgent, 
+    startAgent: agentStart, 
+    stopAgent: agentStop, 
     deleteAgent,
     fundAgent,
-    refreshAgentData 
+    refreshAgentPerformance 
   } = useAgentStore();
   
-  const { farms } = useFarmStore();
-  const { transferToAgent, isConnected } = useWalletStore();
+  const { farms, initialize: initializeFarms } = useFarmStore();
+  const { transferToAgent, isConnected, initialize: initializeWallet } = useWalletStore();
 
   useEffect(() => {
-    fetchAgents();
-  }, [fetchAgents]);
+    const initializeStores = async () => {
+      try {
+        await Promise.all([
+          initializeAgents(),
+          initializeFarms(),
+          initializeWallet()
+        ]);
+      } catch (error) {
+        console.error('Failed to initialize stores:', error);
+        toast.error('Failed to load agent data');
+      }
+    };
+    
+    initializeStores();
+  }, [initializeAgents, initializeFarms, initializeWallet]);
 
   // Auto-refresh agent data every 30 seconds
   useEffect(() => {
     if (agents.length > 0) {
       const interval = setInterval(() => {
-        agents.forEach(agent => refreshAgentData(agent.id));
+        agents.forEach(agent => refreshAgentPerformance(agent.id));
       }, 30000);
       
       return () => clearInterval(interval);
     }
-  }, [agents, refreshAgentData]);
+  }, [agents, refreshAgentPerformance]);
 
   const handleCreateAgent = async () => {
     if (!selectedTemplate || !agentName) {
@@ -256,7 +269,7 @@ export default function AgentsPage() {
 
   const handleStartAgent = async (agentId: string) => {
     try {
-      await startAgent(agentId);
+      await agentStart(agentId);
       toast.success('Agent started successfully');
     } catch (error) {
       toast.error('Failed to start agent');
@@ -265,7 +278,7 @@ export default function AgentsPage() {
 
   const handlePauseAgent = async (agentId: string) => {
     try {
-      await pauseAgent(agentId);
+      await agentStop(agentId);
       toast.success('Agent paused successfully');
     } catch (error) {
       toast.error('Failed to pause agent');
@@ -339,7 +352,7 @@ export default function AgentsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => agents.forEach(agent => refreshAgentData(agent.id))} disabled={loading}>
+          <Button variant="outline" onClick={() => agents.forEach(agent => refreshAgentPerformance(agent.id))} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
@@ -614,8 +627,8 @@ export default function AgentsPage() {
                       </p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">24h Trades</p>
-                      <p className="text-sm font-medium">{agent.trades24h}</p>
+                      <p className="text-xs text-muted-foreground">Total Trades</p>
+                      <p className="text-sm font-medium">{agent.totalTrades}</p>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground">Win Rate</p>
@@ -634,39 +647,30 @@ export default function AgentsPage() {
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Risk Settings:</p>
                       <div className="grid grid-cols-2 gap-2 text-sm">
-                        <span>Max Risk: {agent.settings.maxRisk}%</span>
-                        <span>Target Return: {agent.settings.targetReturn}%</span>
-                        <span>Stop Loss: {agent.settings.stopLoss}%</span>
-                        <span>Take Profit: {agent.settings.takeProfit}%</span>
+                        <span>Max Risk: {agent.riskParameters?.maxRisk || 5}%</span>
+                        <span>Target Return: {agent.riskParameters?.targetReturn || 10}%</span>
+                        <span>Stop Loss: {agent.riskParameters?.stopLoss || -2}%</span>
+                        <span>Take Profit: {agent.riskParameters?.takeProfit || 3}%</span>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded">
                       <div>
                         <p className="text-xs text-muted-foreground">Total Performance</p>
-                        <p className="text-sm font-medium">{agent.performance.totalTrades} trades</p>
-                        <p className="text-xs text-muted-foreground">Volume: {formatPrice(agent.performance.totalVolume)}</p>
+                        <p className="text-sm font-medium">{agent.totalTrades} trades</p>
+                        <p className="text-xs text-muted-foreground">Success: {agent.successfulTrades}</p>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Risk Metrics</p>
-                        <p className="text-sm font-medium">Max DD: {agent.performance.maxDrawdown.toFixed(1)}%</p>
-                        <p className="text-xs text-muted-foreground">Sharpe: {agent.performance.sharpeRatio.toFixed(2)}</p>
+                        <p className="text-sm font-medium">Win Rate: {agent.winRate.toFixed(1)}%</p>
+                        <p className="text-xs text-muted-foreground">P&L: {formatPrice(agent.totalPnL)}</p>
                       </div>
                     </div>
 
-                    {agent.walletAddress && (
-                      <div>
-                        <p className="text-xs text-muted-foreground mb-1">Wallet Address:</p>
-                        <code className="text-xs bg-muted px-2 py-1 rounded">
-                          {agent.walletAddress.slice(0, 6)}...{agent.walletAddress.slice(-4)}
-                        </code>
-                      </div>
-                    )}
-
                     <div>
                       <p className="text-xs text-muted-foreground">
-                        Created: {new Date(agent.created).toLocaleDateString()} • 
-                        Last Active: {new Date(agent.lastActive).toLocaleString()}
+                        Created: {new Date(agent.createdAt).toLocaleDateString()} • 
+                        Last Active: {new Date(agent.lastActivity).toLocaleString()}
                       </p>
                     </div>
                   </div>
